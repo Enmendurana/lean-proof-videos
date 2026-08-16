@@ -1,4 +1,26 @@
 __pycache__
+*.egg-info/
+.venv/
+remotion/node_modules/
+remotion/node_modules/.cache/
+.pytest_cache/
+.hypothesis/
+.ruff_cache/
+output/
+*.mp4
+.lean-proof-video-media/
+.lean-proof-video-cache/
+.cache/
+.remotion/
+.test-*/
+.test-tmp*/
+GeneratedProofs/
+debugmedia/
+remotion/debug.log
+assets/background-music.mp3
+.env
+.env.*
+!.env.example
 
 # Added by cargo
 

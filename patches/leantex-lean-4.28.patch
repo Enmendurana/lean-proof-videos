@@ -1,0 +1,67 @@
+diff --git a/LeanTeX/Builtins.lean b/LeanTeX/Builtins.lean
+index a89a912..988c6af 100644
+--- a/LeanTeX/Builtins.lean
++++ b/LeanTeX/Builtins.lean
+@@ -15,7 +15,8 @@ open scoped MkAppNMacro
+ /-- Replace common unicode characters by their TeX representation. For instance
+ `α` will be replaced by `\alpha`. -/
+ partial def String.toLatex (s : String) : String :=
+-  match (s.split ('_' == ·)).map (fun part => part.foldl (λ s' t => s' ++ t.toLatex) "") with
++  match (s.splitToList ('_' == ·)).map
++      (fun part => part.foldl (λ s' t => s' ++ t.toLatex) "") with
+   | x :: xs@(_ :: _) =>
+     if x.isEmpty then
+       "\\_" ++ ("_".intercalate xs).toLatex
+diff --git a/LeanTeX/LatexCmd.lean b/LeanTeX/LatexCmd.lean
+index 58791bf..2f40c87 100644
+--- a/LeanTeX/LatexCmd.lean
++++ b/LeanTeX/LatexCmd.lean
+@@ -15,5 +15,6 @@ elab tk:"#latex " e:term : command => do
+     let e ← instantiateMVars e
+     let res ← run_latexPP e {}
+     -- Normalize the spaces by collapsing all strings of whitespace into a single space character.
+-    let res := " ".intercalate (res |>.split Char.isWhitespace |>.filter (not ·.isEmpty))
+-    logInfoAt tk res
+\ No newline at end of file
++    let res := " ".intercalate
++      (res |>.splitToList Char.isWhitespace |>.filter (not ·.isEmpty))
++    logInfoAt tk res
+diff --git a/LeanTeX/RuleSyntax.lean b/LeanTeX/RuleSyntax.lean
+index 76eebc0..dc02383 100644
+--- a/LeanTeX/RuleSyntax.lean
++++ b/LeanTeX/RuleSyntax.lean
+@@ -3,6 +3,7 @@ import LeanTeX.Basic
+ namespace LeanTeX.RuleSyntax
+ 
+ open Lean Lean.Elab Lean.Elab.Command
++open scoped Lean.Elab.Command
+ 
+ syntax kindClause := atomic("(" &"kind") " := " ident ")"
+ syntax constClause := atomic("(" &"const") " := " ident ")"
+@@ -102,7 +103,7 @@ def processParamKinds (c? : Option (TSyntax ``paramKindsClause)) : CommandElabM
+     let ppAttr ← `(Lean.Parser.Term.attrInstance| $attrKind? latex_pp $kind)
+     let attrs := attrs?.map (·.getElems) |>.getD #[] |>.push ppAttr
+     `(command| $[$doc?:docComment]? @[$attrs,*]
+-                aux_def latex_pp_rule : LatexPrinter := $(TSyntax.mk body'))
++                private def latex_pp_rule : LatexPrinter := $(TSyntax.mk body'))
+   | _ => Elab.throwUnsupportedSyntax
+ where
+   -- TODO: would be nice if we could use `no_error_if_unused%`
+@@ -123,7 +124,7 @@ where
+     let attrs := attrs?.map (·.getElems) |>.getD #[] |>.push ppAttr
+     let body' ← liftMacroM <| Term.expandWhereDeclsOpt (mkOptionalNode whereClause?) body
+     `(command| $[$doc?:docComment]? @[$attrs,*]
+-                aux_def latex_pp_rule : LatexPrinter := fun _ => $(TSyntax.mk body'))
++                private def latex_pp_rule : LatexPrinter := fun _ => $(TSyntax.mk body'))
+   | _ => Elab.throwUnsupportedSyntax
+ 
+ @[command_elab latex_pp_app_rules_syntax] def elab_latex_app_pp_rules : CommandElab :=
+@@ -139,7 +140,7 @@ where
+     let ppAttr ← `(Lean.Parser.Term.attrInstance|$attrKind? latex_pp_app $kind)
+     let attrs := attrs?.map (·.getElems) |>.getD #[] |>.push ppAttr
+     `(command| $[$doc?:docComment]? @[$attrs,*]
+-                aux_def latex_pp_rule : LatexAppPrinter := $body)
++                private def latex_pp_rule : LatexAppPrinter := $body)
+   | _ => Elab.throwUnsupportedSyntax
+ where
+   isCatchAllPatt (t : Term) : Bool :=

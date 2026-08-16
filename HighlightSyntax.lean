@@ -84,18 +84,21 @@ end Parse
 end parse
 
 def assign_colors (s : String) : IO ColorMap := do
-  -- TODO randomize? or use stdio
-  let filename := "/tmp/animate-lean.txt"
-
+  -- Use the platform's temporary directory (the original hard-coded `/tmp`
+  -- path prevented proof extraction on Windows).
+  let tempDir ← IO.FS.createTempDir
+  let filename := tempDir / "animate-lean.txt"
   IO.FS.writeFile filename s
   let child ← IO.Process.spawn {
     cmd := "pygmentize"
-    args := #["-l", "lean4", "-f", "raw", filename]
+    args := #["-l", "lean4", "-f", "raw", filename.toString]
     stdout := .piped
   }
 
   let output ← child.stdout.readToEnd
   let exitCode ← child.wait
+  IO.FS.removeFile filename
+  IO.FS.removeDir tempDir
   if exitCode != 0
   then throw (IO.userError "pygmentize failed")
 
@@ -105,7 +108,7 @@ def assign_colors (s : String) : IO ColorMap := do
     if line = "" then continue
     let [cat, val] := line.splitToList (· = '\t') |
       throw (IO.userError s!"bad pygmentize output: {line}")
-    let val' := (val.drop 1).dropRight 1 ++ "\""
+    let val' := ((val.drop 1).dropEnd 1).toString ++ "\""
     match Std.Internal.Parsec.String.Parser.run Parse.str val' with
     | .ok v =>
       for _c in v.toList do

@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "units": [
+    {
+      "leanFile": "Foundation.lean",
+      "theorem": "ModularExample.foundation"
+    },
+    {
+      "leanFile": "Main.lean",
+      "theorem": "ModularExample.main"
+    }
+  ]
+}
