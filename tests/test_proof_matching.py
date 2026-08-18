@@ -1,4 +1,12 @@
-from proof_video.proof.matching import path_without_sequent_prefix
+from proof_video.proof.matching import (
+    adapted_expression_path,
+    path_without_sequent_prefix,
+)
+
+
+def test_certified_substitution_keeps_expression_paths_local() -> None:
+    path = ("0", "1", "0", "2")
+    assert adapted_expression_path(path, "certified-substitution") == path
 
 
 def test_legacy_chapter_namespace_is_removed_from_expression_paths() -> None:

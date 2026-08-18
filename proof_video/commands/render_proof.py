@@ -10,6 +10,7 @@ from pathlib import Path
 from proof_video.backend_policy import backend_attempts, run_with_backend_fallback
 from proof_video.cache import lean_evidence_identity, local_source_closure
 from proof_video.cli import main as render_main
+from proof_video.render_service import RenderService
 from proof_video.module_artifact import (
     module_artifact_is_current,
     record_module_artifact,
@@ -23,13 +24,10 @@ from proof_video.toolchains import (
     TOOLCHAIN_CHOICES,
     prepare_lean_432_workspace,
 )
+from proof_video.trace_profile import resolve_trace_profile
 
 _MARKER = re.compile(
     r"^\s*--\s*proof-video\s*:\s*theorem\s+([^\s]+)\s*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-_RESUME_MARKER = re.compile(
-    r"^\s*--\s*proof-video\s*:\s*resumable\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 _COMMAND = re.compile(
@@ -167,6 +165,15 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("snapshot", "legacy"),
         default=None,
         help="Incremental snapshot or legacy Lean frontend",
+    )
+    parser.add_argument(
+        "--trace-granularity",
+        choices=("auto", "fine", "scalable"),
+        default="auto",
+        help=(
+            "auto uses fine proof-term steps for ordinary proofs and scalable "
+            "source-tactic chapters for sources marked resumable"
+        ),
     )
     parser.add_argument(
         "--render-hardware",
@@ -339,6 +346,25 @@ def main(argv: list[str] | None = None) -> int:
         trace_backend = module_result.trace_backend
         module_trace = module_result.value
 
+    requested_mode = {
+        "auto": "auto",
+        "fine": "proof-term",
+        "scalable": "hybrid",
+    }[args.trace_granularity]
+    try:
+        profile = resolve_trace_profile(
+            lean_file,
+            requested_mode=requested_mode,
+            requested_toolchain=(
+                backend.name if module_plan is not None else args.toolchain_backend
+            ),
+            requested_trace_backend=(
+                trace_backend if module_plan is not None else args.trace_backend
+            ),
+        )
+    except (OSError, UnicodeError, ValueError) as error:
+        raise SystemExit(str(error)) from error
+
     render_args = [
         str(lean_file),
         theorem,
@@ -347,7 +373,7 @@ def main(argv: list[str] | None = None) -> int:
         "--output",
         str(output),
         "--toolchain-backend",
-        backend.name if module_plan is not None else args.toolchain_backend,
+        profile.toolchain_backend,
         "--render-hardware",
         args.render_hardware,
         "--render-concurrency",
@@ -363,30 +389,17 @@ def main(argv: list[str] | None = None) -> int:
         render_args.extend(
             ("--trace-backend", trace_backend, "--trace", str(module_trace))
         )
-    elif args.trace_backend is not None:
-        render_args.extend(("--trace-backend", args.trace_backend))
-    resumable = bool(_RESUME_MARKER.search(lean_file.read_text(encoding="utf-8")))
-    if resumable:
-        render_args.extend(("--trace-mode", "hybrid", "--resume"))
-        print(
-            "Long-proof profile: resumable semantic 5-15 second checkpoints enabled.",
-            flush=True,
-        )
-    elif trace_backend == "snapshot":
-        render_args.extend(("--trace-mode", "hybrid", "--resume"))
-        print("Lean 4.32 snapshot profile enabled.", flush=True)
-    else:
-        # Keep the one-command path identical to the strict renderer previews:
-        # every proof-term inference receives the Python semantic planner used
-        # by Remotion. Hybrid source-tactic chapters remain the scalable choice
-        # for explicitly marked, very long developments such as Erdos38.
-        render_args.extend(("--trace-mode", "proof-term"))
-        print("Strict proof-term profile enabled.", flush=True)
+    elif profile.trace_backend is not None:
+        render_args.extend(("--trace-backend", profile.trace_backend))
+    render_args.extend(("--trace-mode", profile.trace_mode))
+    if profile.resumable:
+        render_args.append("--resume")
+    print(profile.description, flush=True)
     if args.rebuild_trace and module_plan is None:
         render_args.append("--rebuild-trace")
     if args.rebuild_chapter is not None and module_plan is None:
         render_args.extend(("--rebuild-chapter", args.rebuild_chapter))
-    return render_main(render_args)
+    return RenderService(runner=render_main).run_arguments(render_args)
 
 
 if __name__ == "__main__":

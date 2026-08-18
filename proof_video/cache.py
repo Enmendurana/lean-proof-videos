@@ -10,9 +10,10 @@ from proof_video.lean_sources import EXTRACTOR_SOURCE_PATHS
 
 
 CACHE_FORMAT_VERSION = 1
-LEAN_EVIDENCE_KEY_VERSION = 2
+LEAN_EVIDENCE_KEY_VERSION = 3
 LEAN_EXTRACTOR_KEY_VERSION = 1
 LEAN_SNAPSHOT_EXTRACTOR_KEY_VERSION = 1
+PROOF_TERM_EVIDENCE_CONTRACT = "proof-trace-2.3-structural-action-lineage"
 _IMPORT = re.compile(r"^\s*import\s+(.+?)\s*$")
 _EXTRACTOR_SOURCES = EXTRACTOR_SOURCE_PATHS
 
@@ -266,6 +267,17 @@ def lean_evidence_identity(
         source_digest,
         toolchain_digest,
     ]
+    # A proof-term trace is reusable across renderer and presentation changes,
+    # but schema 2.2 added kernel-certified forall-instantiation evidence that
+    # cannot be reconstructed from an older trace.  Keep this capability in
+    # the evidence identity instead of hashing the extractor implementation:
+    # future renderer refactors remain warm while pre-2.2 proof terms receive
+    # one deliberate, correctness-preserving rebuild.
+    proof_trace_contract = (
+        PROOF_TERM_EVIDENCE_CONTRACT if trace_mode == "proof-term" else None
+    )
+    if proof_trace_contract is not None:
+        contract_values.append(proof_trace_contract)
     if backend_identity is not None:
         contract_values.append(backend_identity)
     key = _contract_hash(
@@ -279,6 +291,11 @@ def lean_evidence_identity(
         "traceMode": trace_mode,
         "sourceDigest": source_digest,
         "toolchainDigest": toolchain_digest,
+        **(
+            {"proofTraceContract": proof_trace_contract}
+            if proof_trace_contract is not None
+            else {}
+        ),
         **({"toolchainBackend": backend_identity} if backend_identity is not None else {}),
     }
 

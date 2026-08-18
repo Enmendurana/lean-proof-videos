@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from copy import deepcopy
-
 import pytest
 
-from proof_video.models import Movie, ProofTrace
-from proof_video.proof.frontier import temporal_frontier_issues
+from proof_video.models import Movie, ProofStep, ProofTrace
+from proof_video.proof.frontier import (
+    temporal_frontier_issues,
+)
 from proof_video.prooftrace import ProofTraceValidationError, validate_trace
 from proof_video.strict_audit import build_strict_audit
 
@@ -89,6 +90,40 @@ def test_valid_fitch_discharge_becomes_movie() -> None:
     assert audit["valid"]
     assert audit["summary"]["renderedInferenceSteps"] == 2
     assert audit["summary"]["premiseCoverageFailures"] == 0
+
+
+def test_forall_instantiation_metadata_round_trips_from_checked_trace() -> None:
+    raw_step = deepcopy(_trace_json()["steps"][1])
+    raw_step.update(
+        {
+            "rule": "forall-elimination",
+            "instantiationBinderName": "x",
+            "instantiationValueLatex": r"2 \cdot f(x)",
+            "instantiationValueLean": "2 * f x",
+        }
+    )
+    step = ProofStep.from_json(raw_step)
+    assert step.instantiation_binder_name == "x"
+    assert step.instantiation_value_latex == r"2 \cdot f(x)"
+    assert step.instantiation_value_lean == "2 * f x"
+
+
+def test_trace_22_requires_certified_forall_instantiation_argument() -> None:
+    raw = _trace_json()
+    raw["schemaVersion"] = "2.2"
+    raw["steps"][1]["rule"] = "forall-elimination"
+    missing = validate_trace(ProofTrace.from_json(raw))
+    assert not missing.valid
+    assert any("no certified instantiation" in error for error in missing.errors)
+
+    raw["steps"][1].update(
+        {
+            "instantiationBinderName": "x",
+            "instantiationValueLatex": "a",
+            "instantiationValueLean": "a",
+        }
+    )
+    assert validate_trace(ProofTrace.from_json(raw)).valid
 
 
 def test_rigorous_timeline_stages_every_direct_premise_before_its_rule() -> None:
@@ -350,6 +385,91 @@ def test_proof_definition_appears_only_after_its_value_is_completed() -> None:
     audit = build_strict_audit(movie)
     assert audit["valid"]
     assert audit["summary"]["temporalFrontierFailures"] == 0
+
+
+def test_named_proof_definition_shadows_the_older_local_declaration() -> None:
+    def step(
+        step_id: int,
+        proposition: str,
+        kind: str,
+        *,
+        scope: str,
+        parent_scope: str | None,
+        opens_scope: str | None = None,
+        binder_name: str | None = None,
+        premises: list[int] | None = None,
+    ) -> dict:
+        return {
+            "id": step_id,
+            "scopeId": scope,
+            "parentScopeId": parent_scope,
+            "depth": scope.count("/"),
+            "kind": kind,
+            "rule": "let-proof" if kind == "proof-definition" else "theorem-application",
+            "premises": premises or [],
+            "propositionLatex": proposition,
+            "propositionLean": proposition,
+            "displayLatex": proposition,
+            "proofFingerprint": f"proof-{step_id}",
+            "propositionFingerprint": f"prop-{step_id}",
+            "proofPath": f"root.{step_id}",
+            "opensScope": opens_scope,
+            "binderName": binder_name,
+            "kernelChecked": True,
+            "usesLocalContext": True,
+            "semanticNodes": [],
+        }
+
+    trace = ProofTrace.from_json(
+        {
+            "schemaVersion": "2.0",
+            "theoremName": "Demo.replace",
+            "theoremLatex": "R",
+            "theoremLean": "R",
+            "axioms": [],
+            "finalStepId": 3,
+            "validation": {"valid": True},
+            "steps": [
+                step(
+                    0,
+                    "P",
+                    "assumption",
+                    scope="root",
+                    parent_scope=None,
+                    opens_scope="root/body",
+                    binder_name="h",
+                ),
+                step(
+                    1,
+                    "Q",
+                    "theorem-application",
+                    scope="root/body",
+                    parent_scope="root",
+                ),
+                step(
+                    2,
+                    "Q",
+                    "proof-definition",
+                    scope="root/body",
+                    parent_scope="root/body",
+                    opens_scope="root/body/replaced",
+                    binder_name="h",
+                ),
+                step(
+                    3,
+                    "R",
+                    "theorem-application",
+                    scope="root/body/replaced",
+                    parent_scope="root/body",
+                    premises=[2],
+                ),
+            ],
+        }
+    )
+
+    states = trace.rigorous_states(render_only=True)
+    assert [item.id for item in states[0][1]] == [0]
+    assert [item.id for item in states[1][1]] == [2]
 
 
 def test_temporal_frontier_audit_rejects_a_future_context_row() -> None:

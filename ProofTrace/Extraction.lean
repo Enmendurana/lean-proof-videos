@@ -7,6 +7,7 @@ import Lean.Util.NumObjs
 import SemanticTransitions
 import ProofTrace.Schema
 import ProofTrace.Dependencies
+import ProofTrace.Compat
 
 namespace ProofTrace
 
@@ -173,7 +174,7 @@ private def administrativeTheorem (name : Name) : Bool :=
   let text := name.toString
   text.startsWith "Mathlib.Tactic." || text.startsWith "Mathlib.Meta." ||
     text.startsWith "Lean.Meta." ||
-    [``Eq.mp, ``Eq.mpr, ``Eq.ndrec, ``Eq.refl, ``congrArg, ``id].contains name
+    [``Eq.mp, ``Eq.mpr, ``Eq.ndrec, ``Eq.rec, ``Eq.refl, ``congrArg, ``id].contains name
 
 private def addStep
     (builder : IO.Ref Builder)
@@ -185,6 +186,9 @@ private def addStep
     (premises : Array Nat := #[])
     (usedTheorem : Option Name := none)
     (binderName : Option Name := none)
+    (instantiationBinderName : Option Name := none)
+    (instantiationValueLatex : Option String := none)
+    (instantiationValueLean : Option String := none)
     (displayLatex : Option String := none)
     (opensScope : Option String := none)
     (closesScope : Option String := none)
@@ -196,7 +200,10 @@ private def addStep
   if let some cached := state.cachedSteps[id]? then
     unless cached.id == id && cached.proofFingerprint == proofFingerprint &&
         cached.propositionFingerprint == propositionFingerprint &&
-        cached.kind == kind && cached.rule == rule && cached.proofPath == proofPath do
+        cached.kind == kind && cached.rule == rule && cached.proofPath == proofPath &&
+        cached.instantiationBinderName == instantiationBinderName.map (·.toString) &&
+        cached.instantiationValueLatex == instantiationValueLatex &&
+        cached.instantiationValueLean == instantiationValueLean do
       throwError "partial proof checkpoint diverged at step {id}; remove the chapter .parts directory"
     builder.modify fun current =>
       let previous := current.seen[proof]?.getD #[]
@@ -240,6 +247,9 @@ private def addStep
     proofPath
     theoremName := usedTheorem.map (·.toString)
     binderName := binderName.map (·.toString)
+    instantiationBinderName := instantiationBinderName.map (·.toString)
+    instantiationValueLatex
+    instantiationValueLean
     opensScope
     closesScope
     usesLocalContext := proposition.hasFVar
@@ -384,8 +394,24 @@ private partial def visit
         premises := premises.push fnId
       if let some argId ← visit builder arg scopeId parentScopeId depth (path ++ ".arg") then
         premises := premises.push argId
+      let rule ← applicationRule fn
+      let mut instantiationBinderName : Option Name := none
+      let mut instantiationValueLatex : Option String := none
+      let mut instantiationValueLean : Option String := none
+      if rule == "forall-elimination" then
+        match ← whnf (← inferType fn) with
+        | .forallE binderName domain _ _ =>
+          unless ← isProp domain do
+            let localName := if binderName.isAnonymous then `x else binderName
+            instantiationBinderName := some localName
+            instantiationValueLatex := some (← LeanTeX.run_latexPP arg {})
+            instantiationValueLean := some (toString (← ppExpr arg))
+        | _ => pure ()
       let id ← addStep builder proof type scopeId parentScopeId depth "elimination"
-        (← applicationRule fn) path premises
+        rule path premises
+        (instantiationBinderName := instantiationBinderName)
+        (instantiationValueLatex := instantiationValueLatex)
+        (instantiationValueLean := instantiationValueLean)
       return some id
   | .letE binderName binderType value body _ =>
     let valueId? ← visit builder value scopeId parentScopeId depth (path ++ ".value")
@@ -460,7 +486,8 @@ private def extractSingle
     (chapterIndex chapterCount completedWeight totalWeight : Nat := 0)
     (checkpointDirectory : Option System.FilePath := none) : MetaM Trace := do
   let declaration ← getConstInfo theoremName
-  let proof := declaration.value!
+  let some proof := Compat.declarationValue? declaration |
+    throwError "the selected declaration has no proof value: {theoremName}"
   let proofFingerprint := fingerprint proof
   check proof
   let inferred ← inferType proof
@@ -719,7 +746,7 @@ def extract
   unless validation.valid do
     throwError "invalid hierarchical ProofTrace: {String.intercalate "; " validation.errors.toList}"
   let result : Trace := {
-    schemaVersion := "2.1"
+    schemaVersion := "2.2"
     theoremName := mainTrace.theoremName
     source := "Mathlib.Tactic.Explode/hierarchical-local-dependency-adapter"
     granularity := "natural-deduction/local-theorem-chapters"

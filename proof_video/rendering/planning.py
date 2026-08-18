@@ -195,6 +195,18 @@ def _semantic_transition_payload(transition):
         "proofFingerprint": transition.proof_fingerprint,
         "proofTerm": transition.proof_term,
         "proofDescendants": transition.proof_descendants,
+        "proofPremises": transition.proof_premises,
+        "proofConstants": transition.proof_constants,
+        "goalDiff": (
+            {
+                "sourceGoalId": transition.goal_diff.source_goal_id,
+                "targetGoalId": transition.goal_diff.target_goal_id,
+                "sourceChangedPaths": transition.goal_diff.source_changed_paths,
+                "targetChangedPaths": transition.goal_diff.target_changed_paths,
+            }
+            if transition.goal_diff is not None
+            else None
+        ),
         "fallbackReason": transition.fallback_reason,
     }
 

@@ -127,8 +127,9 @@ def export_trace(
                 flush=True,
             )
         else:
-            document["schemaVersion"] = "4.0"
-            document["snapshotTransport"] = "lean-4.32-incremental-worker"
+            if trace_mode == "hybrid":
+                document["schemaVersion"] = "4.0"
+                document["snapshotTransport"] = "lean-4.32-incremental-worker"
             return document
     started = time.monotonic()
     print(

@@ -22,6 +22,12 @@ structure Step where
   proofPath : String
   theoremName : Option String := none
   binderName : Option String := none
+  /-- Exact non-propositional argument consumed by a forall elimination.
+      These fields are produced from the checked application expression, not
+      reconstructed later from equal-looking rendered symbols. -/
+  instantiationBinderName : Option String := none
+  instantiationValueLatex : Option String := none
+  instantiationValueLean : Option String := none
   opensScope : Option String := none
   closesScope : Option String := none
   kernelChecked : Bool := true
@@ -54,7 +60,7 @@ structure Chapter where
 deriving ToJson, FromJson, Repr
 
 structure Trace where
-  schemaVersion : String := "2.1"
+  schemaVersion : String := "2.2"
   theoremName : String
   source : String := "Mathlib.Tactic.Explode/structured-adapter"
   granularity : String := "natural-deduction"

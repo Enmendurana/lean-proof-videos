@@ -32,9 +32,9 @@ const smootherstep = (value: number): number => {
 const activeTransition = (
   timeline: ProofTimeline,
   frame: number,
-): {transition: ProofTransition | null; progress: number} => {
+): {transition: ProofTransition | null; progress: number; linearProgress: number} => {
   const transition = transitionAtFrame(timeline.transitions, frame);
-  if (!transition) return {transition: null, progress: 0};
+  if (!transition) return {transition: null, progress: 0, linearProgress: 0};
   const linearProgress = interpolate(
     frame,
     [transition.startFrame, transition.startFrame + transition.durationFrames],
@@ -53,6 +53,7 @@ const activeTransition = (
   return {
     transition,
     progress: smootherstep(activeProgress),
+    linearProgress: activeProgress,
   };
 };
 
@@ -92,7 +93,7 @@ export const SemanticProofVideo: React.FC<ProofTimeline> = (timeline) => {
     return () => { active = false; };
   }, [cancelRender]);
 
-  const {transition, progress} = activeTransition(timeline, frame);
+  const {transition, progress, linearProgress} = activeTransition(timeline, frame);
   const source = transition ? timeline.states[transition.fromState] : timeline.states[0];
   const target = transition ? timeline.states[transition.toState] : source;
   const sourceLayout = React.useMemo(() => layoutState(source), [source]);
@@ -262,18 +263,114 @@ export const SemanticProofVideo: React.FC<ProofTimeline> = (timeline) => {
         pairs: [],
         created: targetTokens.map((token) => token.index),
         deleted: sourceTokens.map((token) => token.index),
+        staging: null,
+      };
+      const staging = plan.staging ?? null;
+      const phaseProgress = (phase: 0 | 1 | 2): number => {
+        if (!staging) return progress;
+        const linear = interpolate(linearProgress, staging.phaseRanges[phase], [0, 1], {
+          extrapolateLeft: 'clamp', extrapolateRight: 'clamp',
+        });
+        return smootherstep(linear);
+      };
+
+      const replacementRanges = (staging?.substitutionGhosts ?? []).map((ghost) => {
+        const parts = ghost.targetIndices
+          .map((index) => resolvedBoxes.target[index])
+          .filter((box): box is TokenBox => Boolean(box));
+        const sourceToken = resolvedBoxes.source[ghost.source];
+        if (!parts.length || !sourceToken) return null;
+        const left = Math.min(...parts.map((box) => box.left));
+        const right = Math.max(...parts.map((box) => box.left + box.width));
+        return {
+          ghost,
+          visualRowIndex: parts[0].visualRowIndex,
+          left,
+          right,
+          extraWidth: Math.max(0, right - left - sourceToken.width),
+        };
+      }).filter((item): item is NonNullable<typeof item> => Boolean(item));
+      const compactedTargetBox = (targetIndex: number): TokenBox | undefined => {
+        const token = resolvedBoxes.target[targetIndex];
+        if (!token || !staging) return token;
+        const shift = replacementRanges
+          .filter((range) => (
+            range.visualRowIndex === token.visualRowIndex
+            && range.right <= token.left + 0.01
+          ))
+          .reduce((total, range) => total + range.extraWidth, 0);
+        return {...token, left: token.left - shift};
       };
       plan.pairs.forEach(([sourceIndex, targetIndex], pairIndex) => {
-        const from = resolvedBoxes.source[sourceIndex];
+        const pairPhase = staging?.pairPhases[pairIndex] ?? 0;
+        const viaTarget = staging?.pairViaTargets[pairIndex] ?? null;
+        let from = viaTarget === null
+          ? resolvedBoxes.source[sourceIndex]
+          : resolvedBoxes.target[viaTarget];
+        // A staged COPY may begin before the proof object has completely
+        // reached its new context row. Follow that certified storage pair's
+        // live position instead of jumping to its final coordinate. This
+        // lets premise handwriting, storage, and the birth of the next
+        // conclusion overlap without fabricating an intermediate proof state.
+        if (staging && viaTarget !== null) {
+          const viaPairIndex = plan.pairs.findIndex(
+            ([, candidateTarget], candidateIndex) =>
+              candidateTarget === viaTarget
+              && staging.pairPhases[candidateIndex] === 0,
+          );
+          if (viaPairIndex >= 0) {
+            const [viaSourceIndex] = plan.pairs[viaPairIndex];
+            const viaSource = resolvedBoxes.source[viaSourceIndex];
+            const viaDestination = resolvedBoxes.target[viaTarget];
+            if (viaSource && viaDestination) {
+              const viaProgress = phaseProgress(0);
+              from = {
+                ...viaDestination,
+                left: interpolate(viaProgress, [0, 1], [viaSource.left, viaDestination.left]),
+                top: interpolate(viaProgress, [0, 1], [viaSource.top, viaDestination.top]),
+                fontSize: interpolate(
+                  viaProgress,
+                  [0, 1],
+                  [viaSource.fontSize, viaDestination.fontSize],
+                ),
+              };
+            }
+          }
+        }
         const to = resolvedBoxes.target[targetIndex];
+        const compactTo = compactedTargetBox(targetIndex) ?? to;
         if (!from || !to) return;
+        const pairProgress = phaseProgress(pairPhase);
+        const replacementProgress = phaseProgress(2);
+        const phaseStart = staging?.phaseRanges[pairPhase][0] ?? 0;
+        const phaseVisible = !staging || linearProgress >= phaseStart;
+        const pairLeft = pairPhase === 1 && staging
+          ? interpolate(
+              replacementProgress,
+              [0, 1],
+              [
+                interpolate(pairProgress, [0, 1], [from.left, compactTo.left]),
+                to.left,
+              ],
+            )
+          : interpolate(pairProgress, [0, 1], [from.left, to.left]);
+        const pairTop = pairPhase === 1 && staging
+          ? interpolate(
+              replacementProgress,
+              [0, 1],
+              [
+                interpolate(pairProgress, [0, 1], [from.top, compactTo.top]),
+                to.top,
+              ],
+            )
+          : interpolate(pairProgress, [0, 1], [from.top, to.top]);
         const changed = from.latex !== to.latex;
-        const currentLatex = changed && progress >= 0.5 ? to.latex : from.latex;
+        const currentLatex = changed && pairProgress >= 0.5 ? to.latex : from.latex;
         const rewriteOpacity = changed
-          ? interpolate(Math.abs(progress - 0.5), [0, 0.12], [0, 1], {extrapolateRight: 'clamp'})
+          ? interpolate(Math.abs(pairProgress - 0.5), [0, 0.12], [0, 1], {extrapolateRight: 'clamp'})
           : 1;
-        const rewriteReveal = changed && progress >= 0.5
-          ? interpolate(progress, [0.5, 0.94], [0, 1], {
+        const rewriteReveal = changed && pairProgress >= 0.5
+          ? interpolate(pairProgress, [0.5, 0.94], [0, 1], {
               extrapolateLeft: 'clamp', extrapolateRight: 'clamp',
               easing: Easing.inOut(Easing.quad),
             })
@@ -281,9 +378,9 @@ export const SemanticProofVideo: React.FC<ProofTimeline> = (timeline) => {
         visible.push(<AnimatedToken
           key={`pair-${pairIndex}-${sourceIndex}-${targetIndex}`}
           box={{
-            left: interpolate(progress, [0, 1], [from.left, to.left]),
-            top: interpolate(progress, [0, 1], [from.top, to.top]) + waveOffset(to),
-            fontSize: interpolate(progress, [0, 1], [from.fontSize, to.fontSize]),
+            left: pairLeft,
+            top: pairTop + waveOffset(to),
+            fontSize: interpolate(pairProgress, [0, 1], [from.fontSize, to.fontSize]),
           }}
           latex={currentLatex}
           color={to.row.kind === 'context' ? dimChalk : chalk}
@@ -294,45 +391,90 @@ export const SemanticProofVideo: React.FC<ProofTimeline> = (timeline) => {
           // frame: the clone then visibly separates from the premise and
           // slides to its result, while genuinely new tokens continue through
           // the sequential handwriting path below.
-          opacity={rewriteOpacity}
+          opacity={phaseVisible ? rewriteOpacity : 0}
           reveal={rewriteReveal}
         />);
       });
-      for (const sourceIndex of plan.deleted) {
+      for (const [ghostIndex, ghost] of (staging?.substitutionGhosts ?? []).entries()) {
+        const sourceToken = resolvedBoxes.source[ghost.source];
+        const from = resolvedBoxes.target[ghost.viaTarget];
+        const targetParts = ghost.targetIndices
+          .map((index) => resolvedBoxes.target[index])
+          .filter((box): box is TokenBox => Boolean(box));
+        if (!sourceToken || !from || !targetParts.length) continue;
+        const rawTo = targetParts.reduce(
+          (leftmost, candidate) => candidate.left < leftmost.left ? candidate : leftmost,
+          targetParts[0],
+        );
+        const to = compactedTargetBox(rawTo.index) ?? rawTo;
+        const deriveProgress = phaseProgress(1);
+        const replacementProgress = phaseProgress(2);
+        const deriveStarted = linearProgress >= staging!.phaseRanges[1][0];
+        visible.push(<AnimatedToken
+          key={`substitution-ghost-${ghostIndex}-${ghost.source}`}
+          box={{
+            left: interpolate(deriveProgress, [0, 1], [from.left, to.left]),
+            top: interpolate(deriveProgress, [0, 1], [from.top, to.top]),
+            fontSize: interpolate(
+              deriveProgress,
+              [0, 1],
+              [from.fontSize, to.fontSize],
+            ),
+          }}
+          latex={sourceToken.latex}
+          color={chalk}
+          opacity={deriveStarted ? 1 - replacementProgress : 0}
+        />);
+      }
+      for (const [deletedOrder, sourceIndex] of plan.deleted.entries()) {
         const token = resolvedBoxes.source[sourceIndex];
         if (!token) continue;
+        const deletionProgress = phaseProgress(
+          staging?.deletedPhases[deletedOrder] ?? 0,
+        );
         visible.push(<AnimatedToken key={`deleted-${sourceIndex}`} box={token} latex={token.latex}
           color={token.row.kind === 'context' ? dimChalk : chalk}
-          opacity={interpolate(progress, [0, 0.55], [1, 0], {extrapolateRight: 'clamp'})} />);
+          opacity={interpolate(deletionProgress, [0, 0.55], [1, 0], {extrapolateRight: 'clamp'})} />);
       }
       const createdInWritingOrder = [...plan.created].sort((left, right) => left - right);
-      const createdUnits = createdInWritingOrder.map(
-        (targetIndex) => visibleMathUnits(resolvedBoxes.target[targetIndex]?.latex ?? ''),
+      const createdPhaseByTarget = new Map(
+        plan.created.map((targetIndex, createdOrder) => [
+          targetIndex,
+          staging?.createdPhases[createdOrder] ?? 0,
+        ] as const),
       );
-      let createdTotalUnits = 0;
-      const createdOffsets = createdUnits.map((units) => {
-        const offset = createdTotalUnits;
-        createdTotalUnits += units;
-        return offset;
-      });
-      for (const [createdOrder, targetIndex] of createdInWritingOrder.entries()) {
-        const token = resolvedBoxes.target[targetIndex];
-        if (!token) continue;
-        const written = sequentialWriteReveal(
-          createdOffsets[createdOrder],
-          createdUnits[createdOrder],
-          createdTotalUnits,
-          progress,
-          transition.writeStart ?? 0.34,
-          transition.writeEnd ?? 0.98,
+      for (const phase of (staging ? [0, 1, 2] : [0]) as Array<0 | 1 | 2>) {
+        const phaseTargets = createdInWritingOrder.filter(
+          (targetIndex) => createdPhaseByTarget.get(targetIndex) === phase,
         );
-        visible.push(<AnimatedToken key={`created-${targetIndex}`}
-          box={{
-            ...token,
-            top: token.top + waveOffset(token),
-          }}
-          latex={token.latex} color={token.row.kind === 'context' ? dimChalk : chalk}
-          opacity={written > 0 ? 1 : 0} reveal={written} />);
+        const createdUnits = phaseTargets.map(
+          (targetIndex) => visibleMathUnits(resolvedBoxes.target[targetIndex]?.latex ?? ''),
+        );
+        let createdTotalUnits = 0;
+        const createdOffsets = createdUnits.map((units) => {
+          const offset = createdTotalUnits;
+          createdTotalUnits += units;
+          return offset;
+        });
+        for (const [createdOrder, targetIndex] of phaseTargets.entries()) {
+          const token = resolvedBoxes.target[targetIndex];
+          if (!token) continue;
+          const written = sequentialWriteReveal(
+            createdOffsets[createdOrder],
+            createdUnits[createdOrder],
+            createdTotalUnits,
+            phaseProgress(phase),
+            staging ? 0 : (transition.writeStart ?? 0.34),
+            staging ? 1 : (transition.writeEnd ?? 0.98),
+          );
+          visible.push(<AnimatedToken key={`created-${targetIndex}`}
+            box={{
+              ...token,
+              top: token.top + waveOffset(token),
+            }}
+            latex={token.latex} color={token.row.kind === 'context' ? dimChalk : chalk}
+            opacity={written > 0 ? 1 : 0} reveal={written} />);
+        }
       }
     }
   }

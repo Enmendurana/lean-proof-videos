@@ -108,6 +108,7 @@ class ProofTrace:
             "Eq.mp",
             "Eq.mpr",
             "Eq.ndrec",
+            "Eq.rec",
             "Eq.refl",
             "Trans.trans",
             "congrArg",
@@ -200,6 +201,7 @@ class ProofTrace:
             "Eq.mp",
             "Eq.mpr",
             "Eq.ndrec",
+            "Eq.rec",
             "Eq.refl",
             "Trans.trans",
             "congrArg",
@@ -360,6 +362,26 @@ class ProofTrace:
                 if binder.id < step.id
                 and binder.opens_scope is not None
                 and is_ancestor(binder.opens_scope, step.scope_id)
+            ]
+            # Lean's ``replace h`` elaborates to a new proof-valued local
+            # declaration named ``h`` whose proof term still depends on the
+            # older ``h``. The kernel must retain that dependency, but the old
+            # declaration is shadowed in the user-facing local context. Keep
+            # the latest proof-definition and hide only older binders with
+            # the exact same certified binder name. This is scope/identity
+            # based, not a comparison of rendered formulas.
+            replacement_by_name = {
+                binder.binder_name: binder.id
+                for binder in lexical_context
+                if binder.kind == "proof-definition" and binder.binder_name
+            }
+            lexical_context = [
+                binder
+                for binder in lexical_context
+                if not (
+                    binder.binder_name in replacement_by_name
+                    and binder.id < replacement_by_name[binder.binder_name]
+                )
             ]
             staging_for = (
                 inference_steps[index + 1]

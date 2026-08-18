@@ -17,12 +17,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "hypothesis>=6.130,<7", "ruff>=0.16,<0.17"]
+web = ["fastapi>=0.116,<1", "uvicorn[standard]>=0.35,<1"]
+dev = [
+  "pytest>=8",
+  "hypothesis>=6.130,<7",
+  "ruff>=0.16,<0.17",
+  "httpx>=0.28,<1",
+]
 
 [project.scripts]
-lean-proof-video = "proof_video.cli:main"
+lean-proof-video = "proof_video.render_service:cli_entrypoint"
 render-proof = "proof_video.commands.render_proof:main"
 render-proof-cache = "proof_video.commands.cache:main"
+proof-studio = "proof_video.studio.launcher:main"
 
 [tool.setuptools.packages.find]
 include = ["proof_video*"]

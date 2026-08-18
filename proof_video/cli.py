@@ -328,22 +328,46 @@ def main(argv: list[str] | None = None) -> int:
     trace_source = "lean-export"
     evidence_result = None
     if args.trace:
-        if trace_backend == "snapshot" and args.trace_mode != "hybrid":
+        if trace_backend == "snapshot" and args.trace_mode not in {
+            "hybrid",
+            "proof-term",
+        }:
             raise SystemExit(
-                "--trace-backend snapshot currently requires --trace-mode hybrid"
+                "--trace-backend snapshot supports hybrid or proof-term trace mode"
             )
         print(describe_attempt(primary_attempt), flush=True)
         trace_source = "existing-sidecar"
         print(f"Using existing Lean proof trace: {args.trace.resolve()}", flush=True)
         trace_document = read_json(args.trace.resolve())
+        if args.trace_mode == "proof-term":
+            try:
+                schema_parts = str(trace_document.get("schemaVersion", "")).split(
+                    ".", 2
+                )
+                schema = (
+                    int(schema_parts[0]),
+                    int(schema_parts[1]) if len(schema_parts) > 1 else 0,
+                )
+            except (TypeError, ValueError):
+                schema = (0, 0)
+            if schema < (2, 2):
+                raise SystemExit(
+                    "The selected proof-term trace predates schema 2.2 and "
+                    "does not contain certified forall-instantiation steps. "
+                    "Remove --trace to use durable current evidence, or "
+                    "regenerate this sidecar with --rebuild-trace."
+                )
         trace_document_base = args.trace.resolve().parent
     else:
         original_lean_file = args.lean_file.resolve()
 
         def acquire_for_backend(candidate, candidate_trace_backend):
-            if candidate_trace_backend == "snapshot" and args.trace_mode != "hybrid":
+            if candidate_trace_backend == "snapshot" and args.trace_mode not in {
+                "hybrid",
+                "proof-term",
+            }:
                 raise ValueError(
-                    "snapshot trace backend currently requires --trace-mode hybrid"
+                    "snapshot trace backend supports hybrid or proof-term trace mode"
                 )
             extraction_root = root
             lean_file = original_lean_file

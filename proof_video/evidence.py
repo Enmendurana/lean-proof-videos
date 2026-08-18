@@ -48,6 +48,28 @@ class EvidenceResult:
         return path
 
 
+def _schema_at_least(value: Any, major: int, minor: int) -> bool:
+    try:
+        parts = str(value).split(".", 2)
+        actual = (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+    except (TypeError, ValueError):
+        return False
+    return actual >= (major, minor)
+
+
+def _satisfies_trace_contract(document: dict[str, Any], trace_mode: str) -> bool:
+    """Whether cached evidence contains every fact required by this ABI.
+
+    Renderer-only changes intentionally do not invalidate Lean evidence.  The
+    proof-term 2.2 change is different: exact checked forall arguments are new
+    kernel evidence and cannot safely be guessed from a 2.1 document.
+    """
+
+    return trace_mode != "proof-term" or _schema_at_least(
+        document.get("schemaVersion"), 2, 2
+    )
+
+
 def acquire_lean_evidence(
     *,
     root: Path,
@@ -101,12 +123,18 @@ def acquire_lean_evidence(
                 f"{error}\nUse --rebuild-trace to replace this artifact."
             ) from error
         if cached is not None:
-            print(f"Persistent Lean evidence hit: {durable_trace.name}", flush=True)
-            return EvidenceResult(
-                cached,
-                durable_trace.parent,
-                "persistent-lean-evidence",
-                True,
+            if _satisfies_trace_contract(cached, trace_mode):
+                print(f"Persistent Lean evidence hit: {durable_trace.name}", flush=True)
+                return EvidenceResult(
+                    cached,
+                    durable_trace.parent,
+                    "persistent-lean-evidence",
+                    True,
+                )
+            print(
+                "Persistent proof-term evidence predates the certified "
+                "instantiation contract; rebuilding it once...",
+                flush=True,
             )
         if legacy_evidence != durable_trace:
             try:
@@ -116,18 +144,19 @@ def acquire_lean_evidence(
                     f"{error}\nUse --rebuild-trace to replace this artifact."
                 ) from error
             if cached is not None:
-                print(
-                    "Persistent Lean evidence hit (schema v1); migrating its "
-                    "validated trace to the comment-stable v2 key...",
-                    flush=True,
-                )
-                return EvidenceResult(
-                    cached,
-                    legacy_evidence.parent,
-                    "persistent-lean-evidence-v1",
-                    True,
-                    (durable_trace, cached, identity),
-                )
+                if _satisfies_trace_contract(cached, trace_mode):
+                    print(
+                        "Persistent Lean evidence hit (schema v1); migrating its "
+                        "validated trace to the comment-stable v2 key...",
+                        flush=True,
+                    )
+                    return EvidenceResult(
+                        cached,
+                        legacy_evidence.parent,
+                        "persistent-lean-evidence-v1",
+                        True,
+                        (durable_trace, cached, identity),
+                    )
 
     if use_persistent_evidence and legacy_trace.exists():
         print(
@@ -140,12 +169,18 @@ def acquire_lean_evidence(
             cache_root / "trace-objects",
             source_base=legacy_trace.parent,
         )
-        return EvidenceResult(
-            document,
-            durable_trace.parent,
-            "legacy-trace-migrated",
-            True,
-            (durable_trace, document, identity),
+        if _satisfies_trace_contract(document, trace_mode):
+            return EvidenceResult(
+                document,
+                durable_trace.parent,
+                "legacy-trace-migrated",
+                True,
+                (durable_trace, document, identity),
+            )
+        print(
+            "Legacy proof-term trace predates schema 2.2; retaining it on "
+            "disk and exporting current certified evidence...",
+            flush=True,
         )
 
     if rebuild_trace:

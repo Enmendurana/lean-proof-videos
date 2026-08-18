@@ -449,10 +449,21 @@ def _semantic_transition_plan(
                 for node_id in target_nodes
             )
         )
+        source_is_stored_elsewhere = any(
+            other.source_node_id == edge.source_node_id
+            and other.target_node_id != edge.target_node_id
+            and other.reason
+            in {
+                "verified-live-fact-storage",
+                "verified-proof-definition-storage",
+            }
+            for other in transition.edges
+        )
         role = (
             TransitionRole.COPY
             if edge.reason == "verified-premise-copy"
             or crosses_from_persistent_context
+            or source_is_stored_elsewhere
             else (
                 TransitionRole.REWRITE
                 if source_sequence != target_sequence

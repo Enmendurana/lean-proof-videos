@@ -27,6 +27,26 @@ class LatexHypothesis:
         safe_name = self.name.replace("_", r"\_")
         return rf"{safe_name} \;:\; {self.latex}"
 
+
+@dataclass(frozen=True)
+class RuleAnnotation:
+    """Certified in-place presentation of a rule application.
+
+    ``source_step_id`` identifies the checked proof that is being applied.
+    The two transitions split selection/storage from substitution without
+    inventing an administrative ``x := value`` row on the board.
+    """
+
+    key: str
+    latex: str
+    rule: str
+    source_step_id: int | None = None
+    source_latex: str = ""
+    source_lean: str = ""
+    selection_transition: SemanticTransition | None = None
+    substitution_transition: SemanticTransition | None = None
+    presentation_goals: tuple["Goal", ...] = ()
+
 @dataclass(frozen=True)
 class IndexMaps:
     """Stable character identities emitted by the upstream Lean matcher."""
@@ -118,6 +138,32 @@ class SemanticTransitionEdge:
             ),
         )
 
+
+@dataclass(frozen=True)
+class GoalDiffEvidence:
+    """Lean ``TacticInfo`` lineage and official structural Expr diff paths."""
+
+    source_goal_id: str
+    target_goal_id: str
+    source_changed_paths: tuple[str, ...] = ()
+    target_changed_paths: tuple[str, ...] = ()
+
+    @classmethod
+    def from_json(cls, value: dict[str, Any] | None) -> "GoalDiffEvidence | None":
+        if not value:
+            return None
+        return cls(
+            source_goal_id=str(value.get("sourceGoalId", "")),
+            target_goal_id=str(value.get("targetGoalId", "")),
+            source_changed_paths=tuple(
+                str(item) for item in value.get("sourceChangedPaths", ())
+            ),
+            target_changed_paths=tuple(
+                str(item) for item in value.get("targetChangedPaths", ())
+            ),
+        )
+
+
 @dataclass(frozen=True)
 class SemanticTransition:
     source: SemanticExpression
@@ -133,6 +179,7 @@ class SemanticTransition:
     proof_descendants: tuple[str, ...] = ()
     proof_premises: tuple[str, ...] = ()
     proof_constants: tuple[str, ...] = ()
+    goal_diff: GoalDiffEvidence | None = None
     fallback_reason: str | None = None
 
     @classmethod
@@ -157,6 +204,7 @@ class SemanticTransition:
             proof_descendants=tuple(str(item) for item in value.get("proofDescendants", ())),
             proof_premises=tuple(str(item) for item in value.get("proofPremises", ())),
             proof_constants=tuple(str(item) for item in value.get("proofConstants", ())),
+            goal_diff=GoalDiffEvidence.from_json(value.get("goalDiff")),
             fallback_reason=value.get("fallbackReason"),
         )
 
@@ -171,6 +219,7 @@ class Goal:
     index_maps: IndexMaps | None = None
     latex_index_maps: IndexMaps | None = None
     semantic_transition: SemanticTransition | None = None
+    rule_annotations: tuple[RuleAnnotation, ...] = ()
 
     @classmethod
     def from_json(
@@ -196,6 +245,14 @@ class Goal:
             index_maps=IndexMaps.from_json(index_maps),
             latex_index_maps=IndexMaps.from_json(latex_index_maps),
             semantic_transition=SemanticTransition.from_json(semantic_transition),
+            rule_annotations=tuple(
+                RuleAnnotation(
+                    key=str(item.get("key", "")),
+                    latex=str(item.get("latex", "")),
+                    rule=str(item.get("rule", "")),
+                )
+                for item in value.get("ruleAnnotations", ())
+            ),
         )
 
     def latex_state(self) -> str:
@@ -230,6 +287,9 @@ class ProofStep:
     proof_path: str
     theorem_name: str | None = None
     binder_name: str | None = None
+    instantiation_binder_name: str | None = None
+    instantiation_value_latex: str | None = None
+    instantiation_value_lean: str | None = None
     opens_scope: str | None = None
     closes_scope: str | None = None
     kernel_checked: bool = False
@@ -255,6 +315,9 @@ class ProofStep:
             proof_path=str(value.get("proofPath", "")),
             theorem_name=value.get("theoremName"),
             binder_name=value.get("binderName"),
+            instantiation_binder_name=value.get("instantiationBinderName"),
+            instantiation_value_latex=value.get("instantiationValueLatex"),
+            instantiation_value_lean=value.get("instantiationValueLean"),
             opens_scope=value.get("opensScope"),
             closes_scope=value.get("closesScope"),
             kernel_checked=bool(value.get("kernelChecked", False)),

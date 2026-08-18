@@ -29,6 +29,17 @@ structure SemanticEdge where
   confidence : Float
 deriving ToJson, FromJson, BEq, Repr
 
+/-- Goal-level provenance computed while Lean still has both metavariable
+    contexts.  These are the same structural change positions used by Lean's
+    interactive tactic diff; they are evidence about a tactic action, not
+    renderer guesses. -/
+structure GoalDiffEvidence where
+  sourceGoalId : String
+  targetGoalId : String
+  sourceChangedPaths : Array String := #[]
+  targetChangedPaths : Array String := #[]
+deriving ToJson, FromJson, BEq, Repr
+
 /-- The logical correspondence used by the animation.  Character matching is
     deliberately not part of this structure. -/
 structure SemanticTransition where
@@ -42,6 +53,7 @@ structure SemanticTransition where
   proofDescendants : Array String := #[]
   proofPremises : Array String := #[]
   proofConstants : Array String := #[]
+  goalDiff : Option GoalDiffEvidence := none
   fallbackReason : Option String := none
 deriving ToJson, FromJson, Repr
 
@@ -294,6 +306,25 @@ private def introBinderPathMatches (sourceDeclarations depth : Nat)
       return true
   return false
 
+private def semanticRoot (node : SemanticNode) : String :=
+  match node.id.splitOn "/" with
+  | "target" :: _ => "target"
+  | "context" :: declaration :: _ => "context/" ++ declaration
+  | _ => node.id
+
+private def premiseRoot (premiseIds : Array String) (node : SemanticNode) : Bool :=
+  match node.id.splitOn "/" with
+  | "context" :: declaration :: _ => premiseIds.contains declaration
+  | _ => false
+
+private def rootsMayCorrespond (adapter : String) (premiseIds : Array String)
+    (source target : SemanticNode) : Bool :=
+  let sourceRoot := semanticRoot source
+  let targetRoot := semanticRoot target
+  sourceRoot == targetRoot ||
+    (adapter == "intro" && sourceRoot == "target") ||
+    (premiseRoot premiseIds source && targetRoot == "target")
+
 private def edgeReason (adapter : String) (sourceDeclarations introDepth : Nat)
     (source target : SemanticNode) : Option (String × Float) :=
   if adapter == "intro" && source.id.startsWith "target/" &&
@@ -318,9 +349,10 @@ private def edgeReason (adapter : String) (sourceDeclarations introDepth : Nat)
         ".binder.colon" ".colon" then
     some ("verified-intro-binder-punctuation", 1.0)
   else if source.kind != target.kind then none
-  else if !source.identity.isEmpty && source.identity == target.identity then
+  else if !source.identity.isEmpty && source.identity == target.identity &&
+      source.path == target.path then
     some (if source.kind == "fvar" then "same-fvar" else "same-identity", 1.0)
-  else if source.fingerprint == target.fingerprint then
+  else if source.fingerprint == target.fingerprint && source.path == target.path then
     some ("defeq-normal-form", 0.95)
   else if source.path == target.path && adapter == "rewrite" then
     some ("verified-rewrite-position", 0.90)
@@ -332,7 +364,8 @@ private def edgeReason (adapter : String) (sourceDeclarations introDepth : Nat)
 
 /-- Deterministically pair expression occurrences.  Repeated symbols are
     disambiguated by their expression-tree context, never by screen position. -/
-def semanticEdges (adapter : String) (source target : Array SemanticNode) : Array SemanticEdge := Id.run do
+def semanticEdges (adapter : String) (source target : Array SemanticNode)
+    (premiseIds : Array String := #[]) : Array SemanticEdge := Id.run do
   let mut used : List String := []
   let mut usedTargets : List String := []
   let mut result := #[]
@@ -353,6 +386,7 @@ def semanticEdges (adapter : String) (source target : Array SemanticNode) : Arra
       continue
     for sourceNode in source do
       if used.contains sourceNode.id then continue
+      if !rootsMayCorrespond adapter premiseIds sourceNode targetNode then continue
       if sourceNode.kind == "quantifier-symbol" &&
           sourceNode.identity == targetNode.identity then
         used := sourceNode.id :: used
@@ -369,6 +403,7 @@ def semanticEdges (adapter : String) (source target : Array SemanticNode) : Arra
     let mut best : Option (Nat × Float × SemanticNode × String) := none
     for sourceNode in source do
       if used.contains sourceNode.id then continue
+      if !rootsMayCorrespond adapter premiseIds sourceNode targetNode then continue
       let some (reason, confidence) :=
         edgeReason adapter sourceDeclarations introDepth sourceNode targetNode | continue
       let contextScore := commonPrefixLength sourceNode.path targetNode.path

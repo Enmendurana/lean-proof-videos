@@ -7,6 +7,7 @@ from proof_video.models import (
     Goal,
     LatexHypothesis,
     Movie,
+    RuleAnnotation,
     SemanticExpression,
     SemanticExpressionNode,
     SemanticSpan,
@@ -15,10 +16,56 @@ from proof_video.models import (
 )
 from proof_video.animation.latex import _latex_matching_token_spans
 from proof_video.remotion_export import (
+    _staged_proof_use_payload,
     _visual_token_chunks,
     build_remotion_timeline,
 )
-from proof_video.transition_plan import TransitionPlan
+from proof_video.transition_plan import (
+    TokenPair,
+    TransitionCandidate,
+    TransitionPlan,
+    TransitionRole,
+)
+
+
+def test_staged_proof_use_chains_elimination_from_new_context_position() -> None:
+    storage = TransitionCandidate(
+        "storage",
+        "old-theorem",
+        "stored-theorem",
+        TransitionRole.PRESERVE,
+        "verified-proof-definition-storage",
+        (TokenPair(0, 2),),
+        True,
+        False,
+    )
+    elimination = TransitionCandidate(
+        "elimination",
+        "old-theorem",
+        "specialized-theorem",
+        TransitionRole.COPY,
+        "verified-structural-expression",
+        (TokenPair(0, 5),),
+        True,
+        False,
+    )
+    plan = TransitionPlan(
+        source_count=1,
+        target_count=7,
+        selected=(storage, elimination),
+        created_targets=(0, 1, 3, 4, 6),
+        deleted_sources=(),
+        valid=True,
+    )
+
+    staging = _staged_proof_use_payload(plan, (5, 6))
+
+    assert staging is not None
+    assert staging["phaseRanges"] == [[0.0, 0.34], [0.32, 0.66], [0.72, 1.0]]
+    assert staging["pairPhases"] == [0, 1]
+    assert staging["pairViaTargets"] == [None, 2]
+    assert staging["createdPhases"] == [0, 0, 0, 0, 2]
+    assert staging["substitutionGhosts"] == []
 
 
 def test_visual_chunks_keep_one_oversized_atomic_token_intact() -> None:
@@ -68,6 +115,379 @@ def test_remotion_timeline_has_stable_rows_and_bounded_duration() -> None:
     assert timeline["transitions"][0]["toState"] == 1
     assert timeline["edgeReasons"] == []
     assert timeline["writeSpeed"] == 48.0
+
+    first_row_token_count = len(timeline["states"][0]["rows"][0]["tokens"])
+    stable_pairs = timeline["transitions"][0]["plan"]["pairs"]
+    assert all(
+        [index, index, 0] in stable_pairs
+        for index in range(first_row_token_count)
+    )
+    assert not set(range(first_row_token_count)) & set(
+        timeline["transitions"][0]["plan"]["deleted"]
+    )
+
+
+def test_changed_declaration_follows_current_certified_context_without_pinning() -> None:
+    first = Goal(
+        "g1",
+        "",
+        latex_target="A",
+        latex_context=(LatexHypothesis("h", "P", key="fvar-17"),),
+        lineage_id="proof",
+    )
+    second = Goal(
+        "g2",
+        "",
+        latex_target="B",
+        latex_context=(LatexHypothesis("h", "Q", key="fvar-17"),),
+        lineage_id="proof",
+    )
+
+    timeline = build_remotion_timeline(
+        Movie("changed-context", (Frame(0, "", (first,)), Frame(1, "rw", (second,))))
+    )
+    second_rows = timeline["states"][1]["rows"]
+
+    # A frame is Lean's current context, not the union of every declaration
+    # seen since the first rendered proof-term node.  Pinning the old row here
+    # duplicated nested eigenvariables throughout the IMO proof.
+    assert [row["latex"] for row in second_rows] == [r"h \;:\; Q", r"\vdash\;B"]
+    assert timeline["transitions"][0]["plan"] is None
+
+
+def test_initial_local_variables_are_not_pinned_and_duplicated_later() -> None:
+    first = Goal(
+        "g1",
+        "",
+        latex_target="A",
+        latex_context=(
+            LatexHypothesis("f", r"\mathbb{R} \to \mathbb{R}", key="f"),
+            LatexHypothesis("x", r"\mathbb{R}", key="outer-x"),
+        ),
+        lineage_id="proof",
+    )
+    second = Goal(
+        "g2",
+        "",
+        latex_target="B",
+        latex_context=(
+            LatexHypothesis("f", r"\mathbb{R} \to \mathbb{R}", key="f"),
+            LatexHypothesis("x", r"\mathbb{R}", key="inner-x"),
+        ),
+        lineage_id="proof",
+    )
+
+    timeline = build_remotion_timeline(
+        Movie("no-pinned-locals", (Frame(0, "", (first,)), Frame(1, "", (second,))))
+    )
+    for state in timeline["states"]:
+        rows = [row["latex"] for row in state["rows"]]
+        assert rows.count(r"x \;:\; \mathbb{R}") == 1
+
+
+def test_ordinary_theorem_application_does_not_turn_old_goal_into_postulate() -> None:
+    first = Goal("g1", "", latex_target=r"f(x) < 0 \implies \text{False}", lineage_id="proof")
+    second = Goal(
+        "g2",
+        "",
+        latex_target=r"0 \leq f(x)",
+        lineage_id="proof",
+        semantic_transition=SemanticTransition(
+            source=SemanticExpression(()),
+            target=SemanticExpression(()),
+            edges=(),
+            proof_kind="certified-proof-term",
+            adapter="theorem-application",
+        ),
+    )
+
+    timeline = build_remotion_timeline(
+        Movie("no-false-postulate", (Frame(0, "", (first,)), Frame(1, "", (second,))))
+    )
+    assert [row["latex"] for row in timeline["states"][1]["rows"]] == [
+        r"\vdash\;0 \leq f(x)"
+    ]
+
+
+def test_forall_instantiation_uses_visible_premise_without_duplicate_target() -> None:
+    premise = LatexHypothesis("h", r"\forall x,\ P(x)", key="proof-context-7")
+    first = Goal(
+        "g1",
+        "",
+        latex_target="A",
+        latex_context=(premise,),
+        lineage_id="proof",
+    )
+    annotation = RuleAnnotation(
+        key="forall-instantiation-7",
+        latex=r"x \;:=\; 2 \cdot f(x)",
+        rule="forall-elimination",
+        source_step_id=7,
+        source_latex=r"\forall x,\ P(x)",
+        source_lean="∀ x, P x",
+    )
+    second = Goal(
+        "g2",
+        "",
+        latex_target=r"P(2 \cdot f(x))",
+        latex_context=(premise,),
+        lineage_id="proof",
+        rule_annotations=(annotation,),
+    )
+
+    timeline = build_remotion_timeline(
+        Movie("explicit-instantiation", (Frame(0, "", (first,)), Frame(1, "forall-elimination", (second,))))
+    )
+    assert len(timeline["states"]) == 2
+    assert [row["latex"] for row in timeline["states"][1]["rows"]] == [
+        premise.render_latex(),
+        r"\vdash\;P(2 \cdot f(x))",
+    ]
+    assert all(
+        row["kind"] != "annotation"
+        for state in timeline["states"]
+        for row in state["rows"]
+    )
+
+
+def test_visible_forall_source_does_not_create_a_redundant_selection_state() -> None:
+    source = Goal(
+        "proof-step-7",
+        "∀ x, P x",
+        latex_target=r"\forall x,\ P(x)",
+        lineage_id="proof",
+    )
+    result = Goal(
+        "proof-step-8",
+        "P a",
+        latex_target="P(a)",
+        lineage_id="proof",
+        rule_annotations=(
+            RuleAnnotation(
+                key="forall-instantiation-8",
+                latex=r"x \;:=\; a",
+                rule="forall-elimination",
+                source_step_id=7,
+                source_latex=r"\forall x,\ P(x)",
+                source_lean="∀ x, P x",
+            ),
+        ),
+    )
+
+    timeline = build_remotion_timeline(
+        Movie("no-redundant-selection", (Frame(0, "", (source,)), Frame(1, "", (result,))))
+    )
+    assert len(timeline["states"]) == 2
+
+
+def test_hybrid_trace_fvar_identity_preserves_keyless_hypothesis_row() -> None:
+    context = (LatexHypothesis("h", "P"),)
+    first = Goal(
+        "g1", "", latex_target="A", latex_context=context, lineage_id="proof"
+    )
+    transition = SemanticTransition(
+        source=SemanticExpression(
+            (
+                SemanticExpressionNode(
+                    "context/fvar-7/name",
+                    kind="declaration",
+                    identity="fvar:fvar-7",
+                    path=("context", "0", "name"),
+                ),
+            )
+        ),
+        target=SemanticExpression(
+            (
+                SemanticExpressionNode(
+                    "context/fvar-7/name",
+                    kind="declaration",
+                    identity="fvar:fvar-7",
+                    path=("context", "0", "name"),
+                ),
+            )
+        ),
+        edges=(
+            SemanticTransitionEdge(
+                "context/fvar-7/name",
+                "context/fvar-7/name",
+                "same-identity",
+                1.0,
+            ),
+        ),
+    )
+    second = Goal(
+        "g2",
+        "",
+        latex_target="B",
+        latex_context=context,
+        lineage_id="proof",
+        semantic_transition=transition,
+    )
+
+    timeline = build_remotion_timeline(
+        Movie("hybrid-fvar", (Frame(0, "", (first,)), Frame(1, "rw", (second,))))
+    )
+    context_token_count = len(timeline["states"][0]["rows"][0]["tokens"])
+    plan = timeline["transitions"][0]["plan"]
+
+    assert all(
+        [index, index, 0] in plan["pairs"]
+        for index in range(context_token_count)
+    )
+    assert not set(range(context_token_count)) & set(plan["deleted"])
+
+
+def test_calc_moves_previous_conclusion_into_a_carried_proof_row() -> None:
+    context = (LatexHypothesis("x", r"\mathbb{R}", key="fvar-x"),)
+    inequality = r"f(t) \leq t \cdot f(x) - x \cdot f(x) + f(f(x))"
+    equality = r"f(t) = f(x + (t - x))"
+    first = Goal(
+        "parent",
+        "",
+        latex_target=inequality,
+        latex_context=context,
+        lineage_id="proof",
+    )
+    second = Goal(
+        "calc-child",
+        "",
+        latex_target=equality,
+        latex_context=context,
+        lineage_id="proof",
+        parent_goal_id="parent",
+        semantic_transition=SemanticTransition(
+            source=SemanticExpression(()),
+            target=SemanticExpression(()),
+            edges=(),
+            proof_kind="equality-transport",
+            adapter="calc",
+        ),
+    )
+
+    timeline = build_remotion_timeline(
+        Movie("calc-carry", (Frame(0, "", (first,)), Frame(1, "calc", (second,))))
+    )
+    source_rows = timeline["states"][0]["rows"]
+    target_rows = timeline["states"][1]["rows"]
+    carried = next(
+        row for row in target_rows if row["key"].startswith("carried-conclusion-")
+    )
+
+    assert carried["latex"] == inequality
+    assert target_rows[-1]["latex"] == rf"\vdash\;{equality}"
+
+    source_tokens = [
+        token for row in source_rows for token, _start, _end in row["tokens"]
+    ]
+    target_tokens = [
+        token for row in target_rows for token, _start, _end in row["tokens"]
+    ]
+    # The carried row is immediately before the target, so derive its actual
+    # flattened offset without relying on the number of context rows.
+    carried_start = sum(
+        len(row["tokens"])
+        for row in target_rows[: target_rows.index(carried)]
+    )
+    carried_targets = set(
+        range(carried_start, carried_start + len(carried["tokens"]))
+    )
+    pairs = timeline["transitions"][0]["plan"]["pairs"]
+    mapped = [pair for pair in pairs if pair[1] in carried_targets]
+
+    assert len(mapped) == len(carried["tokens"])
+    assert [source_tokens[source] for source, _target, _copy in mapped] == [
+        target_tokens[target] for _source, target, _copy in mapped
+    ]
+    assert all(copy == 0 for _source, _target, copy in mapped)
+
+
+def test_sibling_goal_never_reuses_common_parent_transition() -> None:
+    """A closed calc child is not the Lean source of its pending sibling."""
+
+    parent = Goal("parent", "", latex_target="A", lineage_id="proof")
+    first = Goal(
+        "first-child",
+        "",
+        latex_target="B",
+        lineage_id="proof",
+        parent_goal_id="parent",
+        semantic_transition=SemanticTransition(
+            source=SemanticExpression(
+                (
+                    SemanticExpressionNode(
+                        "parent-a",
+                        kind="fvar",
+                        identity="fvar:a",
+                        path=("0",),
+                        latex_spans=(SemanticSpan(0, 1),),
+                    ),
+                )
+            ),
+            target=SemanticExpression(()),
+            edges=(),
+            proof_kind="goal-reduction",
+            adapter="calc",
+        ),
+    )
+    stale_transition = SemanticTransition(
+        source=SemanticExpression(
+            (
+                SemanticExpressionNode(
+                    "parent-a",
+                    kind="fvar",
+                    identity="fvar:a",
+                    path=("0",),
+                    latex_spans=(SemanticSpan(0, 1),),
+                ),
+            )
+        ),
+        target=SemanticExpression(
+            (
+                SemanticExpressionNode(
+                    "second-c",
+                    kind="fvar",
+                    identity="fvar:a",
+                    path=("0",),
+                    latex_spans=(SemanticSpan(0, 1),),
+                ),
+            )
+        ),
+        edges=(
+            SemanticTransitionEdge(
+                "parent-a", "second-c", "same-fvar", 1.0
+            ),
+        ),
+        proof_kind="goal-reduction",
+        adapter="calc",
+    )
+    second = Goal(
+        "second-child",
+        "",
+        latex_target="C",
+        lineage_id="second-branch",
+        parent_goal_id="parent",
+        semantic_transition=stale_transition,
+    )
+
+    timeline = build_remotion_timeline(
+        Movie(
+            "siblings",
+            (
+                Frame(0, "", (parent,), (parent,)),
+                Frame(1, "calc", (first, second), (first,)),
+                # Closing the first goal makes the second one visible.  The
+                # certified edge still starts at ``parent``, not ``first``.
+                Frame(2, "rfl", (second,), (second,)),
+            ),
+        )
+    )
+
+    second_plan = timeline["transitions"][1]["plan"]
+    assert second_plan is None or second_plan["pairs"] == []
+    assert not any(
+        row["key"].startswith("carried-conclusion-")
+        for row in timeline["states"][2]["rows"]
+    )
 
 
 def test_formula_length_does_not_change_the_global_step_clock() -> None:

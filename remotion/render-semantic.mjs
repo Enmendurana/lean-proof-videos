@@ -39,8 +39,27 @@ const stillFrameValue = value('--still');
 const recalibrate = has('--recalibrate-renderer');
 const timeline = JSON.parse(await fs.readFile(timelinePath, 'utf8'));
 
-if (timeline.schemaVersion !== 1 || timeline.rendererContract !== 'strict-proof-transition-v1') {
-  throw new Error(`Unsupported strict timeline schema: ${timeline.schemaVersion}`);
+const supportedContracts = new Set([
+  'strict-proof-transition-v1',
+  'strict-proof-transition-v2-stable-rows',
+  'strict-proof-transition-v3-mandatory-stable-rows',
+  'strict-proof-transition-v4-pinned-premises',
+  'strict-proof-transition-v5-carried-conclusions',
+  'strict-proof-transition-v6-certified-current-context',
+  'strict-proof-transition-v7-in-place-instantiation',
+  'strict-proof-transition-v8-staged-instantiation-context',
+  'strict-proof-transition-v9-temporal-dedup-multisource',
+  'strict-proof-transition-v10-advancing-stored-conclusion',
+  'strict-proof-transition-v11-split-forall-specialization',
+  'strict-proof-transition-v12-consumed-forall-row',
+  'strict-proof-transition-v13-action-lineage',
+  'strict-proof-transition-v14-staged-proof-use',
+  'strict-proof-transition-v15-overlapped-proof-use',
+]);
+if (timeline.schemaVersion !== 1 || !supportedContracts.has(timeline.rendererContract)) {
+  throw new Error(
+    `Unsupported strict timeline contract: schema=${timeline.schemaVersion}, contract=${timeline.rendererContract}`,
+  );
 }
 
 const timings = {};

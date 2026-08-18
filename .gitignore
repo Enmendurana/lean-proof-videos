@@ -3,6 +3,9 @@ __pycache__
 .venv/
 remotion/node_modules/
 remotion/node_modules/.cache/
+studio/node_modules/
+studio/dist/
+*.tsbuildinfo
 .pytest_cache/
 .hypothesis/
 .ruff_cache/
@@ -10,6 +13,7 @@ output/
 *.mp4
 .lean-proof-video-media/
 .lean-proof-video-cache/
+.lean-proof-video-web/
 .cache/
 .remotion/
 .test-*/

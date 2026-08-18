@@ -103,7 +103,20 @@ private unsafe def processLoadedSnapshot (config : Animate.Config)
     | .error error => throw <| IO.userError s!"invalid kernel certificate: {error}"
   unless certificates.selectedTheorem == config.const_name.toString do
     throw <| IO.userError "kernel certificate theorem does not match the request"
-  let trace ← Animate.buildHybridTrace config importedEnv finalEnv captures certificates
+  let trace ← if config.trace_mode == .proofTerm then
+    let coreContext : Core.Context := {
+      fileName := config.file_path.toString
+      fileMap := default
+      maxHeartbeats := 0
+      maxRecDepth := 100000
+    }
+    let coreState : Core.State := { env := finalEnv }
+    let (proofTrace, _, _) ← _root_.Lean.Meta.MetaM.toIO
+      (ProofTrace.extract config.const_name (some importedEnv)
+        config.trace_checkpoint_dir) coreContext coreState
+    pure (Lean.toJson proofTrace)
+  else
+    Animate.buildHybridTrace config importedEnv finalEnv captures certificates
   if let some moduleOutput := config.module_output then
     if let some parent := moduleOutput.parent then
       IO.FS.createDirAll parent

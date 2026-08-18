@@ -47,6 +47,16 @@ def _semantic(result: dict) -> dict:
     return transition
 
 
+def _assert_goal_diff_matches_result(action: dict, result: dict) -> None:
+    transition = result["semanticTransition"]
+    evidence = transition.get("goalDiff")
+    assert evidence is not None
+    assert evidence["sourceGoalId"] == action["goalActions"][0]["startGoalId"]
+    assert evidence["targetGoalId"] == result["goal"]["goalId"]
+    assert isinstance(evidence["sourceChangedPaths"], list)
+    assert isinstance(evidence["targetChangedPaths"], list)
+
+
 def _latex_state(goal: dict) -> str:
     context = []
     for hypothesis in goal.get("latexContext", []):
@@ -82,7 +92,8 @@ def test_in_place_tactics_emit_one_mapped_successor(
     adapter: str,
     proof_kind: str,
 ) -> None:
-    result = _single_result(_action(tactic_trace, tactic))
+    action = _action(tactic_trace, tactic)
+    result = _single_result(action)
     assert result["goal"]["state"].splitlines()[-1] == target_tail
     transition = _semantic(result)
     assert transition["adapter"] == adapter
@@ -90,6 +101,7 @@ def test_in_place_tactics_emit_one_mapped_successor(
     assert transition["proofFingerprint"]
     assert transition["proofTerm"]
     assert result["goal"]["goalId"] in transition["proofDescendants"]
+    _assert_goal_diff_matches_result(action, result)
     assert {edge["reason"] for edge in transition["edges"]} <= {
         "same-fvar",
         "same-identity",

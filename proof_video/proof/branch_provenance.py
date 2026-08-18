@@ -30,6 +30,20 @@ _ATOMIC_KINDS = frozenset(
 )
 
 
+def _belongs_to_visible_step(node_id: str, step_id: int) -> bool:
+    """Recognize a target occurrence regardless of its chapter namespace.
+
+    Context rows deliberately begin with ``proof-context-N/`` because their
+    board ownership is part of the node identity.  A live conclusion keeps
+    the extractor's globally unique ID, which in a hierarchical trace is
+    ``chapter-K/proof-step-N/...``.  Provenance is about the proof-step segment,
+    not whether that segment happens to be the first component of the ID.
+    """
+
+    marker = f"proof-step-{step_id}/"
+    return node_id.startswith(marker) or f"/{marker}" in node_id
+
+
 def _contains_path(
     outer: tuple[str | int, ...], inner: tuple[str | int, ...]
 ) -> bool:
@@ -117,7 +131,6 @@ def premise_branch_edges(
         branch_sources_by_leaf: dict[int, tuple[SemanticExpressionNode, ...]] = {}
         for leaf in visible_leaf_ids:
             context_prefix = f"proof-context-{leaf}/"
-            target_prefix = f"proof-step-{leaf}/"
             branch_sources_by_leaf[leaf] = tuple(
                 node
                 for node in source_nodes
@@ -127,7 +140,7 @@ def premise_branch_edges(
                     and node.path[0] == "context"
                 )
                 or (
-                    node.node_id.startswith(target_prefix)
+                    _belongs_to_visible_step(node.node_id, leaf)
                     and node.path
                     and node.path[0] != "context"
                 )

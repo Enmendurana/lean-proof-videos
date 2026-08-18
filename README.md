@@ -70,6 +70,15 @@ proof_video/
 ├── commands/
 │   ├── render_proof.py two-path automatic-theorem command
 │   └── cache.py        manual unbounded-cache status/prune commands
+├── studio/
+│   ├── app.py          localhost FastAPI API, SSE and artifact streaming
+│   ├── store.py        SQLite projects, revisions, jobs and artifact registry
+│   ├── sources.py      path allowlist, SHA conflicts and immutable snapshots
+│   ├── jobs.py         persistent single-heavy-job scheduler
+│   ├── worker.py       isolated, cancellable render process
+│   ├── security.py     one-time bootstrap and strict local session
+│   └── launcher.py     hidden Windows/browser launcher
+├── render_service.py   shared typed CLI/web request and progress boundary
 ├── models.py           trace-to-movie orchestration
 ├── lean_export.py      Lean worker process, progress, ETA and checkpoints
 ├── trace_store.py      streaming SHA-256 theorem-object storage
@@ -118,6 +127,40 @@ disabled by the system policy.
 
 If FFmpeg is missing, install it once (for example `winget install Gyan.FFmpeg`) and open a new terminal.
 
+## Lean Proof Studio (brez terminala)
+
+`setup.ps1` namesti tudi lokalni FastAPI/React studio, zgradi njegov frontend in
+na namizju ustvari bližnjico **Lean Proof Studio**. Po namestitvi ga odpreš z
+dvoklikom. Studio posluša izključno na `127.0.0.1`; prvi kratek bootstrap token
+se zamenja za `HttpOnly`, `SameSite=Strict` sejo in se ne more uporabiti drugič.
+
+Studio omogoča:
+
+- izbiro `.lean` datoteke iz tega repozitorija in urejanje v Monaco editorju;
+- obnovljive, vsebinsko naslovljene revizije ter zaščito pred prepisom zunanje
+  spremembe datoteke;
+- preverjanje, prvih ali zadnjih 20 sekund in celotni MP4;
+- trajno čakalno vrsto z enim težkim Lean/Remotion jobom, SSE napredkom, ETA,
+  preklicem in nadaljevanjem iz veljavnih checkpointov;
+- predvajanje MP4, download, audit, QA, loge in kontaktne slike iz istega
+  pogleda.
+
+Job vedno uporablja nespremenljiv posnetek izbrane revizije. Zaprtje brskalnika
+ga ne prekine. Če se studio med renderjem ustavi, izolirani worker ostane živ;
+ob naslednjem zagonu se UI ponovno priklopi na njegov PID in journal. CLI ostane
+združljiv, ker Studio, `lean-proof-video` in `render-proof` uporabljajo isti
+tipizirani `RenderService` ter isti strict audit/QA cevovod.
+
+Studio lahko po želji zaženeš tudi ročno:
+
+```powershell
+.\proof-studio.cmd
+```
+
+Stanje je v `.lean-proof-video-web/studio.db`, revizije in job artefakti pa v
+istem ignoriranem imeniku. Brisanje tega imenika ponastavi samo Studio; Lean
+trace in render cache ostaneta ločena in nedotaknjena.
+
 ## Render the IMO 2011 Problem 3 demo
 
 IMO 2011 Problem 3 is the canonical demo for this project. After renderer or pacing changes, use this proof for the representative preview and end-to-end render.
@@ -133,10 +176,20 @@ default. Add `-- proof-video: theorem Namespace.name` anywhere in the Lean file
 to select a different declaration while keeping the same two-argument command.
 The equivalent installed command is `.\.venv\Scripts\render-proof.exe`.
 
+The two-path command deliberately chooses the strict fine-grained proof-term
+profile for an ordinary proof. `auto` runs the shared extractor over the Lean
+4.32 incremental snapshot and falls back to Lean 4.28/legacy if that operation
+fails. Both backends contract version-specific kernel plumbing to the same 71
+human-visible IMO states instead of the 30 source-tactic states in the scalable
+hybrid trace. This is a presentation-quality choice, not a weaker audit; all
+states remain kernel-derived and strict-audited. Pass
+`--trace-granularity scalable` only when you explicitly want the smaller
+source-tactic trace.
+
 ## Long proofs and resumable rendering
 
-`Input/Erdos38.lean` is pinned to the repository's Lean/Mathlib 4.28 toolchain
-and selects its final theorem with source markers. Render it with the same
+`Input/Erdos38.lean` selects its final theorem and scalable profile with source
+markers. Render it with the same
 two-path command:
 
 ```powershell
@@ -445,6 +498,24 @@ In this fallback mode, the Manim timeline follows upstream `goalActions`, and th
 
 State changes are driven by elaborated `Lean.Expr` occurrences rather than repeated characters. Each occurrence has an expression-tree path, an `FVarId`/constant identity or normalized fingerprint, and its exact span in the unchanged LeanTeX output. Certified rule adapters transform those paths (for example the body path of `forall` elimination and introduction). Local `x : A` declarations have explicit binder/name/colon/type nodes, so closing a scope moves that same declaration into `\forall x : A` instead of manufacturing a second `x`. Complete applications such as `f(x)` are indivisible transition candidates; a bare function head can never move independently.
 
+Source actions additionally use Lean's own `TacticInfo` before/after
+metavariable contexts.  Parentage is recovered with `Meta.getMVars`, matching
+the infoview's goal-parent algorithm, and changed expression paths come from
+the public `Lean.Widget.diffInteractiveGoals` implementation.  Consequently a
+transition is attached to the exact `sourceGoalId -> targetGoalId` pair.  A
+second `calc` branch or another sibling may share a parent, but it can never
+reuse the previous sibling's visual edge.  If the widget diff cannot describe
+an exotic goal, extraction continues and the renderer conservatively writes
+the unresolved material.
+
+Proof-term presentation uses a separate immutable proof-DAG projection.  A
+completed derived fact remains one stable context object while its certified
+descendants use it; it is not hidden and reconstructed through synthetic
+`forall` staging rows.  Certified instantiation values stay in the strict
+audit evidence and animate in place instead of appearing as administrative
+`x := value` lines.  This keeps source-action lifecycle, kernel certificates,
+and visual presentation independent without losing any proof obligation.
+
 The strict renderer compiles Lean edges into a `TransitionPlan` containing only `preserve`, `copy`, `rewrite`, `create` and `delete` operations. Google OR-Tools CP-SAT selects a globally non-overlapping set of maximal AST hyperedges across all visible rows. A second validator checks the solver result before Manim sees it. Equal LaTeX, equal SVG shapes, screen position, generic fingerprints and SymPy are not proof of identity and cannot produce strict moves. Anything unresolved becomes `delete + create` (visually, a new write) rather than a guessed transform. This is deliberately conservative: a transition may be less elegant, but it cannot permute two equal-looking `f`, parentheses, relations or binders without a certified edge. Legacy `latexIndexMaps`, shape matching and optional SymPy analysis remain isolated to old tactic traces that do not claim strict ProofTrace semantics.
 
 For old non-strict tactic traces only, a secondary [SymPy AST matcher](https://docs.sympy.org/latest/modules/parsing.html) can still analyze bounded algebraic subexpressions. Strict ProofTrace rendering never promotes a SymPy or textual proposal to a physical move; algebraic preservation must be exported as a certified Lean congruence/rewrite path or it is written anew.
@@ -514,6 +585,7 @@ Useful options:
 - `--rebuild-chapter THEOREM`: rebuild one theorem chapter while reusing compatible siblings
 - `--toolchain-backend auto|lean-4.32|lean-4.28`: `auto` first uses the isolated Lean 4.32.1 snapshot backend and automatically retries the complete Lean phase with 4.28/legacy if 4.32 fails; the explicit choices are fail-fast
 - `--trace-backend snapshot|legacy`: use the validated 4.32 incremental prefrontend or the legacy frontend (`snapshot` requires Lean 4.32)
+- `render-proof --trace-granularity auto|fine|scalable`: ordinary two-path renders default to the fine proof-term profile; resumable sources default to scalable hybrid chapters
 - `--cache`: additionally reuse Manim/Remotion rendering artifacts
 - `--no-cache`: disable renderer reuse; durable Lean evidence remains enabled
 - `--write-speed 48`: set the middle proof-animation pace. In Remotion, movement and writing share the complete duration of each step; the first and final step retain the same fixed absolute speed, while the edge curves adapt smoothly to the selected middle pace. The `--chars-per-second` alias remains for compatibility.

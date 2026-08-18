@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 import proof_video.cli as cli
 import proof_video.evidence as evidence
 import proof_video.lean_export as lean_export
@@ -225,6 +227,36 @@ def test_persistent_lean_evidence_is_reused_by_default(
 
     assert result == 0
     assert "Persistent Lean evidence hit" in capsys.readouterr().out
+
+
+def test_explicit_old_proof_term_sidecar_is_rejected(monkeypatch, tmp_path) -> None:
+    proof = tmp_path / "Proof.lean"
+    proof.write_text("theorem demo : True := by trivial", encoding="utf-8")
+    sidecar = tmp_path / "old.json"
+    sidecar.write_text(
+        '{"schemaVersion":"2.1","theoremName":"demo",'
+        '"startGoal":{"goalId":"g0","state":"A","latexTarget":"A"},'
+        '"actions":[]}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(cli, "_restore_windows_path", lambda: None)
+
+    with pytest.raises(SystemExit, match="predates schema 2.2"):
+        cli.main(
+            [
+                str(proof),
+                "demo",
+                "--trace",
+                str(sidecar),
+                "--trace-mode",
+                "proof-term",
+                "--json-only",
+                "--toolchain-backend",
+                "lean-4.28",
+                "--output",
+                str(tmp_path / "proof.mp4"),
+            ]
+        )
 
 
 def test_rebuild_trace_bypasses_evidence_and_commits_new_artifact(

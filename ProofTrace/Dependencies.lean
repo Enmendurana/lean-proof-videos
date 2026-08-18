@@ -1,6 +1,7 @@
 import Lean
 import Lean.DeclarationRange
 import Lean.Util.FoldConsts
+import ProofTrace.Compat
 
 namespace ProofTrace
 
@@ -17,8 +18,8 @@ private partial def scanLocalProofDependencies
   for name in constants do
     if importedEnv.contains name || active.contains name then
       continue
-    let declaration ← getConstInfo name
-    let some value := declaration.value? true | continue
+    let some declaration ← Compat.getConstInfo? name | continue
+    let some value := Compat.declarationValue? declaration | continue
     unless ← isProp declaration.type do continue
     -- Exact declaration ranges identify mathematical declarations written in
     -- the input source. Generated proof constants are transparent carriers:
@@ -86,8 +87,8 @@ private partial def scanCurrentModuleProofDependencies
   for name in constants do
     if (env.getModuleIdxFor? name).isSome || active.contains name then
       continue
-    let declaration ← getConstInfo name
-    let some value := declaration.value? true | continue
+    let some declaration ← Compat.getConstInfo? name | continue
+    let some value := Compat.declarationValue? declaration | continue
     unless ← isProp declaration.type do continue
     if (← findDeclarationRangesCore? name).isSome then
       unless (← seenDependencies.get).contains name do

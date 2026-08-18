@@ -131,6 +131,12 @@ def _candidate_errors(
         and candidate.reason not in {
             "verified-structural-shell",
             "verified-premise-branch-shell",
+            # Lean can encode a numeral/coercion as an application even when
+            # its semantic renderer exposes a single atomic token.  This edge
+            # is emitted only for a unique checked fingerprint in an immediate
+            # theorem premise and result, so it is a whole surviving subterm,
+            # not a partial glyph match inside an application.
+            "verified-direct-premise-subexpression",
         }
     ):
         errors.append(

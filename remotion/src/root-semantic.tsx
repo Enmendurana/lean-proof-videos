@@ -6,7 +6,7 @@ import type {ProofTimeline} from './types-semantic';
 
 const emptyTimeline: ProofTimeline = {
   schemaVersion: 1,
-  rendererContract: 'strict-proof-transition-v1',
+  rendererContract: 'strict-proof-transition-v15-overlapped-proof-use',
   theorem: 'proof',
   width: 1280,
   height: 720,

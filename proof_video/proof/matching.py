@@ -63,6 +63,8 @@ def adapted_expression_path(
         return ("0", *path[2:])
     if rule == "forall-introduction" and path and path[0] == "0":
         return ("0", "1", *path[1:])
+    if rule == "certified-substitution":
+        return path
     return None
 
 

@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from proof_video.models import (
     Movie,
     ProofStep,
@@ -107,6 +109,93 @@ def test_direct_premise_subformula_is_a_certified_copy_edge() -> None:
     source_latex = _proof_sequent_latex(previous, (premise,), {1: "hf"})
     assert "".join(source_latex[s.start : s.end] for s in source.latex_spans) == inner
     assert edge.target_node_id == "target-root"
+
+
+def test_new_proof_alias_can_store_and_immediately_feed_forall_elimination() -> None:
+    inner = r"\forall t : \mathbb{R},\ P(t,x)"
+    source_latex = rf"\forall x : \mathbb{{R}},\ {inner}"
+    inner_start = source_latex.index(inner)
+    source = _proof_step(
+        20,
+        source_latex,
+        kind="introduction",
+        rule="forall-introduction",
+        nodes=(
+            SemanticExpressionNode(
+                "source-outer",
+                kind="forall",
+                path=("0",),
+                latex_spans=(SemanticSpan(0, len(source_latex)),),
+            ),
+            SemanticExpressionNode(
+                "source-inner",
+                kind="forall",
+                parent_id="source-outer",
+                path=("0", "1"),
+                latex_spans=(SemanticSpan(inner_start, len(source_latex)),),
+            ),
+        ),
+    )
+    alias = replace(
+        _proof_step(
+            21,
+            source_latex,
+            kind="proof-definition",
+            rule="let-proof",
+            binder_name="h",
+            nodes=source.semantic_nodes,
+        ),
+        proposition_fingerprint=source.proposition_fingerprint,
+        proposition_lean=source.proposition_lean,
+    )
+    shadowed = _proof_step(
+        1,
+        r"\forall y : \mathbb{R},\ Q(y)",
+        kind="assumption",
+        rule="assume",
+        binder_name="h",
+    )
+    target = _proof_step(
+        22,
+        inner,
+        premises=(alias.id,),
+        nodes=(
+            SemanticExpressionNode(
+                "target-inner",
+                kind="forall",
+                path=("0",),
+                latex_spans=(SemanticSpan(0, len(inner)),),
+            ),
+        ),
+    )
+
+    transition = _proof_sequent_transition(
+        source,
+        (shadowed,),
+        target,
+        (alias,),
+        {shadowed.id: "h", alias.id: "h"},
+    )
+
+    assert transition is not None
+    assert any(
+        edge.source_node_id == "source-inner"
+        and edge.target_node_id == "target-inner"
+        and edge.reason == "verified-structural-expression"
+        for edge in transition.edges
+    )
+    assert any(
+        edge.source_node_id == "proof-context-1/binder"
+        and edge.target_node_id == "proof-context-21/binder"
+        and edge.reason == "verified-shadowed-local-label"
+        for edge in transition.edges
+    )
+    assert any(
+        edge.source_node_id == "source-inner"
+        and edge.target_node_id == "proof-context-21/source-inner"
+        and edge.reason == "verified-proof-definition-storage"
+        for edge in transition.edges
+    )
 
 
 def test_direct_premise_rhs_atom_survives_opaque_theorem_application() -> None:
@@ -575,7 +664,7 @@ def test_contracted_derivation_composes_carrier_rewrite_from_multiple_rows() -> 
             ),
         ),
         SemanticExpressionNode(
-            "proof-step-13/distributed",
+            "chapter-0/proof-step-13/distributed",
             kind="app",
             fingerprint="source-elaboration",
             path=("0", "1"),
@@ -734,7 +823,7 @@ def test_contracted_derivation_composes_carrier_rewrite_from_multiple_rows() -> 
         "verified-premise-branch-shell",
     ) in keys
     assert (
-        "proof-step-13/distributed",
+        "chapter-0/proof-step-13/distributed",
         "target-distributed",
         "verified-premise-branch-copy",
     ) in keys
@@ -906,6 +995,12 @@ def test_forall_compound_substitution_is_new_not_borrowed_from_equal_context() -
     assert any(
         edge.source_node_id == "source-function"
         and edge.target_node_id == "target-function"
+        for edge in transition.edges
+    )
+    assert any(
+        edge.source_node_id == "source-binder-use"
+        and edge.target_node_id == "target-substitution"
+        and edge.reason == "verified-forall-substitution"
         for edge in transition.edges
     )
 
@@ -1347,6 +1442,52 @@ def test_forall_elimination_preserves_rhs_by_ast_path_not_repeated_f_text() -> N
     )
 
 
+def test_theorem_application_preserves_unique_reordered_checked_subterm() -> None:
+    source_latex = r"f(x) < 0 \implies \text{False}"
+    target_latex = r"0 \leq f(x)"
+    source_zero = source_latex.index("0")
+    target_zero = target_latex.index("0")
+    source = _proof_step(
+        1,
+        source_latex,
+        rule="implies-introduction",
+        nodes=(
+            SemanticExpressionNode(
+                "source-zero",
+                kind="app",
+                fingerprint="checked-zero",
+                path=("0", "0", "1"),
+                latex_spans=(SemanticSpan(source_zero, source_zero + 1),),
+            ),
+        ),
+    )
+    target = _proof_step(
+        2,
+        target_latex,
+        kind="theorem-application",
+        rule="theorem-application",
+        premises=(1,),
+        nodes=(
+            SemanticExpressionNode(
+                "target-zero",
+                kind="app",
+                fingerprint="checked-zero",
+                path=("0", "0", "1"),
+                latex_spans=(SemanticSpan(target_zero, target_zero + 1),),
+            ),
+        ),
+    )
+
+    transition = _proof_sequent_transition(source, (), target, (), {})
+    assert transition is not None
+    assert any(
+        edge.source_node_id == "source-zero"
+        and edge.target_node_id == "target-zero"
+        and edge.reason == "verified-direct-premise-subexpression"
+        for edge in transition.edges
+    )
+
+
 def test_goal_timeline_replaces_and_closes_goals() -> None:
     raw = {
         "theoremName": "Demo.proof",
@@ -1440,6 +1581,12 @@ def test_semantic_transition_preserves_overlapping_spans_and_edges() -> None:
                     "semanticTransition": {
                         "proofKind": "ring",
                         "adapter": "expr-tree-v1",
+                        "goalDiff": {
+                            "sourceGoalId": "g1",
+                            "targetGoalId": "g2",
+                            "sourceChangedPaths": ["target:0.1"],
+                            "targetChangedPaths": ["target:0.0"],
+                        },
                         "sourceNodes": [
                             {"id": "whole", "kind": "add", "latexSpans": [{"start": 0, "end": 3}]},
                             {"id": "left", "kind": "term", "latexSpans": [[0, 1], [2, 3]]},
@@ -1462,6 +1609,11 @@ def test_semantic_transition_preserves_overlapping_spans_and_edges() -> None:
     assert transition is not None
     assert transition.proof_kind == "ring"
     assert transition.adapter == "expr-tree-v1"
+    assert transition.goal_diff is not None
+    assert transition.goal_diff.source_goal_id == "g1"
+    assert transition.goal_diff.target_goal_id == "g2"
+    assert transition.goal_diff.source_changed_paths == ("target:0.1",)
+    assert transition.goal_diff.target_changed_paths == ("target:0.0",)
     assert transition.source.nodes[1].latex_spans[1].start == 2
     assert [edge.source_node_id for edge in transition.edges] == [
         "whole", "left", "left"

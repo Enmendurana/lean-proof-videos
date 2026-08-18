@@ -20,6 +20,7 @@ EXTRACTOR_SOURCE_PATHS = (
     "MathlibLatex.lean",
     "ProofLatex.lean",
     "ProofTrace.lean",
+    "ProofTrace/Compat.lean",
     "ProofTrace/Schema.lean",
     "ProofTrace/Dependencies.lean",
     "ProofTrace/Extraction.lean",

@@ -17,6 +17,15 @@ class ValidationReport:
     errors: tuple[str, ...]
 
 
+def _schema_at_least(version: str, major: int, minor: int) -> bool:
+    try:
+        parts = version.split(".", 2)
+        current = (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+    except (TypeError, ValueError):
+        return False
+    return current >= (major, minor)
+
+
 def validate_trace(trace: "ProofTrace") -> ValidationReport:
     """Validate ordering, Fitch scope and the kernel flags of ProofTrace v2.
 
@@ -86,6 +95,18 @@ def validate_trace(trace: "ProofTrace") -> ValidationReport:
             errors.append(f"step {step.id} is not marked kernel-checked")
         if step.scope_id not in scope_parents:
             errors.append(f"step {step.id} uses unknown scope {step.scope_id!r}")
+        if (
+            _schema_at_least(trace.schema_version, 2, 2)
+            and step.rule == "forall-elimination"
+            and not (
+                step.instantiation_binder_name
+                and step.instantiation_value_latex
+                and step.instantiation_value_lean
+            )
+        ):
+            errors.append(
+                f"step {step.id} forall elimination has no certified instantiation"
+            )
         for premise_id in step.premises:
             premise = steps_by_id.get(premise_id)
             if premise is None:

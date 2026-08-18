@@ -168,6 +168,15 @@ def build_strict_audit(movie: Movie) -> dict[str, Any]:
     errors.extend(issue.message() for issue in frontier_issues)
     rendered_premises = trace.rendered_premise_map()
     steps_by_id = {step.id: step for step in trace.steps}
+    certified_instantiations = 0
+    for step in render_steps:
+        if not step.instantiation_value_latex:
+            continue
+        certified_instantiations += 1
+        # The checked binder/value pair remains in immutable trace evidence.
+        # It intentionally need not become an administrative ``x := value``
+        # blackboard row: the semantic edge animates the substitution in
+        # place, while validation still rejects missing instantiation data.
     premise_failures = 0
     for (source_step, source_context), (target_step, target_context) in zip(
         states, states[1:], strict=False
@@ -330,6 +339,7 @@ def build_strict_audit(movie: Movie) -> dict[str, Any]:
             "temporalFrontierFailures": len(frontier_issues),
             "certifiedSemanticEdges": accepted_edges,
             "uncertifiedSemanticEdges": rejected_edges,
+            "certifiedForallInstantiations": certified_instantiations,
         },
         "hiddenAdministrative": hidden_administrative,
         "transitions": transitions,

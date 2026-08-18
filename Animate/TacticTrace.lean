@@ -1,4 +1,5 @@
 import Lean
+import Lean.Widget.Diff
 import Batteries.Data.RBMap.Basic
 import Annotations
 import HighlightSyntax
@@ -41,6 +42,7 @@ structure TacticStepData where
   proofDescendants : Array String := #[]
   proofPremises : Array String := #[]
   proofConstants : Array String := #[]
+  goalDiffs : Array GoalDiffEvidence := #[]
 deriving Lean.ToJson, Lean.FromJson
 
 structure SeqData where
@@ -76,6 +78,7 @@ structure TacticStep' where
   proofDescendants : Array String := #[]
   proofPremises : Array String := #[]
   proofConstants : Array String := #[]
+  goalDiffs : Array GoalDiffEvidence := #[]
 deriving Lean.ToJson, Lean.FromJson
 
 /-- map from goalId to tactic step that consumes that goal.
@@ -222,6 +225,65 @@ def renderGoal (g : MVarId) : MetaM Goal := g.withContext do
     semanticNodes
   }
 
+private partial def widgetChangedPaths
+    (text : Lean.Widget.CodeWithInfos) : Array String :=
+  match text with
+  | .text _ => #[]
+  | .append children => children.foldl
+      (fun result child => result ++ widgetChangedPaths child) #[]
+  | .tag info child =>
+      let own := if info.diffStatus?.isSome then #[toString info.subexprPos] else #[]
+      own ++ widgetChangedPaths child
+
+private def interactiveChangedPaths (goal : Lean.Widget.InteractiveGoal) : Array String :=
+  let target := (widgetChangedPaths goal.type).map ("target:" ++ ·)
+  goal.hyps.foldl (fun result hypothesis =>
+    let pathPrefix := match hypothesis.fvarIds[0]? with
+      | some id => "context/" ++ id.name.toString ++ ":"
+      | none => "context/unknown:"
+    result ++ (widgetChangedPaths hypothesis.type).map (pathPrefix ++ ·)
+  ) target
+
+/-- Run Lean's public infoview tactic diff before Exprs are flattened to
+    LaTeX.  This also uses the official metavariable-parent relation based on
+    ``Meta.getMVars``. -/
+unsafe def goalDiffEvidence? (ci : ContextInfo) (ti : TacticInfo)
+    (source target : MVarId) : IO (Option GoalDiffEvidence) := do
+  try
+    let descendants ← ci.runCoreM <|
+      (Meta.getMVars (.mvar source)).run' (s := { mctx := ti.mctxAfter })
+    if !descendants.contains target then return none
+    let sourceInteractive ← ci.runCoreM <|
+      (Lean.Widget.goalToInteractive source).run' (s := { mctx := ti.mctxBefore })
+    let targetInteractive ← ci.runCoreM <|
+      (Lean.Widget.goalToInteractive target).run' (s := { mctx := ti.mctxAfter })
+    let sourceDiff ← ci.runCoreM <|
+      (Lean.Widget.diffInteractiveGoals false ti {
+        goals := #[sourceInteractive]
+      }).run' (s := { mctx := ti.mctxAfter })
+    let targetDiff ← ci.runCoreM <|
+      (Lean.Widget.diffInteractiveGoals true ti {
+        goals := #[targetInteractive]
+      }).run' (s := { mctx := ti.mctxAfter })
+    let sourceChangedPaths := match sourceDiff.goals[0]? with
+      | some goal => interactiveChangedPaths goal
+      | none => #[]
+    let targetChangedPaths := match targetDiff.goals[0]? with
+      | some goal => interactiveChangedPaths goal
+      | none => #[]
+    return some {
+      sourceGoalId := source.name.toString
+      targetGoalId := target.name.toString
+      sourceChangedPaths
+      targetChangedPaths
+    }
+  catch _ =>
+    -- Goal-diff evidence improves animation, but must never make trace
+    -- extraction fail for an exotic pretty-printer or metavariable state.
+    -- In that rare case the renderer keeps the conservative lineage-only
+    -- transition and creates changed material instead of guessing.
+    return none
+
 unsafe def visitTacticInfo (ci : ContextInfo) (ti : TacticInfo)
     (acc : List TacticStep) : IO (List TacticStep) := do
   let src := ci.fileMap.source
@@ -260,6 +322,12 @@ unsafe def visitTacticInfo (ci : ContextInfo) (ti : TacticInfo)
     let cm := (renderGoal g).run' (s := { mctx := ti.mctxAfter })
     let goal ← ci.runCoreM cm
     goals_after := goals_after ++ [goal]
+
+  let mut goalDiffs := #[]
+  for source in ti.goalsBefore do
+    for target in ti.goalsAfter do
+      if let some evidence ← goalDiffEvidence? ci ti source target then
+        goalDiffs := goalDiffs.push evidence
 
   if let some ``Lean.Parser.Tactic.tacticSeq1Indented := ti.name?
   then
@@ -304,6 +372,7 @@ unsafe def visitTacticInfo (ci : ContextInfo) (ti : TacticInfo)
                   proofDescendants := stepProofDescendants
                   proofPremises := stepProofPremises
                   proofConstants := stepProofConstants
+                  goalDiffs
                   goals_before, goals_after }
        return [TacticStep.node d []]
      else
@@ -326,6 +395,7 @@ unsafe def visitTacticInfo (ci : ContextInfo) (ti : TacticInfo)
                   proofDescendants := stepProofDescendants
                   proofPremises := stepProofPremises
                   proofConstants := stepProofConstants
+                  goalDiffs
                   reverse_s2 := true
                   goals_before, goals_after }
        return [TacticStep.node d []]
@@ -350,6 +420,7 @@ unsafe def visitTacticInfo (ci : ContextInfo) (ti : TacticInfo)
                   proofDescendants := stepProofDescendants
                   proofPremises := stepProofPremises
                   proofConstants := stepProofConstants
+                  goalDiffs
                   reverse_s1 := true
                   reverse_s2 := true
                   goals_before, goals_after }
@@ -376,6 +447,7 @@ unsafe def visitTacticInfo (ci : ContextInfo) (ti : TacticInfo)
                   proofDescendants := stepProofDescendants
                   proofPremises := stepProofPremises
                   proofConstants := stepProofConstants
+                  goalDiffs
                   reverse_s1 := true
                   goals_before, goals_after }
        return [TacticStep.node d []]
@@ -406,6 +478,7 @@ unsafe def visitTacticInfo (ci : ContextInfo) (ti : TacticInfo)
              proofDescendants := stepProofDescendants
              proofPremises := stepProofPremises
              proofConstants := stepProofConstants
+             goalDiffs
              goals_before, goals_after }
   return [TacticStep.node d acc]
 
@@ -445,7 +518,8 @@ partial def stage2_aux (step : TacticStep) : StateM StepMap Unit := match step w
                  proofTerm := data.proofTerm
                  proofDescendants := data.proofDescendants
                  proofPremises := data.proofPremises
-                 proofConstants := data.proofConstants }
+                 proofConstants := data.proofConstants
+                 goalDiffs := data.goalDiffs }
     set (sm.insert goalId ts')
   for child in children do
     stage2_aux child
@@ -477,6 +551,7 @@ def stage3_inner (config : Config) (step : TacticStep') : GoalAction := Id.run d
         sourceNodes := step.goal_before.semanticNodes
         targetNodes := g.semanticNodes
         edges := semanticEdges adapter step.goal_before.semanticNodes g.semanticNodes
+          step.proofPremises
         proofKind := step.proofKind
         adapter
         proofFingerprint := step.proofFingerprint
@@ -484,6 +559,9 @@ def stage3_inner (config : Config) (step : TacticStep') : GoalAction := Id.run d
         proofDescendants := step.proofDescendants
         proofPremises := step.proofPremises
         proofConstants := step.proofConstants
+        goalDiff := step.goalDiffs.find? fun evidence =>
+          evidence.sourceGoalId == step.goal_before.goalId &&
+            evidence.targetGoalId == g.goalId
         fallbackReason := if step.goal_before.semanticNodes.isEmpty || g.semanticNodes.isEmpty then
           some "semantic expression nodes unavailable"
         else none

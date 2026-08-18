@@ -2,7 +2,7 @@ export type ProofToken = [latex: string, start: number, end: number];
 
 export type ProofRow = {
   key: string;
-  kind: 'context' | 'target';
+  kind: 'context' | 'annotation' | 'target';
   latex: string;
   globalStart: number;
   tokens: ProofToken[];
@@ -54,12 +54,43 @@ export type ProofTransition = {
     pairs: Array<[source: number, target: number, copy: 0 | 1]>;
     created: number[];
     deleted: number[];
+    staging?: null | {
+      phaseRanges: [
+        storage: [number, number],
+        derivation: [number, number],
+        substitution: [number, number],
+      ];
+      pairPhases: Array<0 | 1 | 2>;
+      pairViaTargets: Array<number | null>;
+      createdPhases: Array<0 | 1 | 2>;
+      deletedPhases: Array<0 | 1 | 2>;
+      substitutionGhosts: Array<{
+        source: number;
+        viaTarget: number;
+        targetIndices: number[];
+      }>;
+    };
   };
 };
 
 export type ProofTimeline = {
   schemaVersion: 1;
-  rendererContract: 'strict-proof-transition-v1';
+  rendererContract:
+    | 'strict-proof-transition-v1'
+    | 'strict-proof-transition-v2-stable-rows'
+    | 'strict-proof-transition-v3-mandatory-stable-rows'
+    | 'strict-proof-transition-v4-pinned-premises'
+    | 'strict-proof-transition-v5-carried-conclusions'
+    | 'strict-proof-transition-v6-certified-current-context'
+    | 'strict-proof-transition-v7-in-place-instantiation'
+    | 'strict-proof-transition-v8-staged-instantiation-context'
+    | 'strict-proof-transition-v9-temporal-dedup-multisource'
+    | 'strict-proof-transition-v10-advancing-stored-conclusion'
+    | 'strict-proof-transition-v11-split-forall-specialization'
+    | 'strict-proof-transition-v12-consumed-forall-row'
+    | 'strict-proof-transition-v13-action-lineage'
+    | 'strict-proof-transition-v14-staged-proof-use'
+    | 'strict-proof-transition-v15-overlapped-proof-use';
   theorem: string;
   width: number;
   height: number;

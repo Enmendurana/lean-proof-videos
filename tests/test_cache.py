@@ -90,6 +90,20 @@ def test_evidence_key_changes_with_source_toolchain_or_mode(tmp_path: Path) -> N
     assert lean_evidence_identity(tmp_path, proof, "demo", "hybrid") != first
 
 
+def test_only_proof_term_evidence_declares_the_certified_trace_contract(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "lean-toolchain").write_text("leanprover/lean4:v4.28.0")
+    proof = tmp_path / "Proof.lean"
+    proof.write_text("theorem demo : True := by trivial")
+
+    proof_term = lean_evidence_identity(tmp_path, proof, "demo", "proof-term")
+    hybrid = lean_evidence_identity(tmp_path, proof, "demo", "hybrid")
+
+    assert proof_term["proofTraceContract"].startswith("proof-trace-2.3-")
+    assert "proofTraceContract" not in hybrid
+
+
 def test_evidence_key_ignores_comment_only_edits(tmp_path: Path) -> None:
     (tmp_path / "lean-toolchain").write_text("leanprover/lean4:v4.28.0")
     proof = tmp_path / "Proof.lean"

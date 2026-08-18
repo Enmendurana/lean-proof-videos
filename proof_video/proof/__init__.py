@@ -6,6 +6,7 @@ from proof_video.proof.schema import (
     IndexMaps,
     LatexHypothesis,
     ProofStep,
+    RuleAnnotation,
     SemanticExpression,
     SemanticExpressionNode,
     SemanticSpan,
@@ -15,7 +16,7 @@ from proof_video.proof.schema import (
 from proof_video.proof.trace import ProofChapter, ProofTrace
 
 __all__ = [
-    "Frame", "Goal", "IndexMaps", "LatexHypothesis", "ProofChapter", "ProofStep", "ProofTrace",
+    "Frame", "Goal", "IndexMaps", "LatexHypothesis", "ProofChapter", "ProofStep", "ProofTrace", "RuleAnnotation",
     "SemanticExpression", "SemanticExpressionNode", "SemanticSpan",
     "SemanticTransition", "SemanticTransitionEdge",
 ]

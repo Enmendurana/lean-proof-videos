@@ -43,11 +43,11 @@ def _proof_context_line(step: ProofStep, aliases: dict[int, str]) -> tuple[str, 
         line = _rename_definition_latex(
             step.display_latex,
             step.binder_name or "",
-            aliases[step.id],
+            aliases.get(step.id, step.binder_name or ""),
         )
         return line, 0
-    if step.kind in {"assumption", "eigenvariable"}:
-        name = aliases[step.id].replace("_", r"\_")
+    if step.kind in {"assumption", "eigenvariable", "proof-definition"}:
+        name = aliases.get(step.id, step.binder_name or "").replace("_", r"\_")
         line = rf"{name} \;:\; {step.proposition_latex}"
         return line, len(line) - len(step.proposition_latex)
     return step.proposition_latex, 0
@@ -72,13 +72,15 @@ def _proof_sequent_nodes(
                 latex_spans=(SemanticSpan(offset, offset + len(line)),),
             )
         )
-        if binder.kind in {"assumption", "eigenvariable"}:
+        if binder.kind in {"assumption", "eigenvariable", "proof-definition"}:
             # The rendered local declaration is itself semantic syntax.  Its
             # name and colon do not belong to the proposition Expr, but they
             # are the very objects consumed by forall/implies introduction.
             # Give them stable binder-owned nodes so ``x : A`` can move into
             # ``forall x : A, ...`` instead of writing a second, unrelated x.
-            name = aliases[binder.id].replace("_", r"\_")
+            name = aliases.get(binder.id, binder.binder_name or "").replace(
+                "_", r"\_"
+            )
             colon_start = line.index(":")
             nodes.extend(
                 (
@@ -248,10 +250,10 @@ def _occurrence_edges(
             )
     return result
 
-def _forall_substitution_target_paths(
+def _forall_substitution_occurrences(
     source_nodes: tuple[SemanticExpressionNode, ...],
     target_nodes: tuple[SemanticExpressionNode, ...],
-) -> frozenset[tuple[str | int, ...]]:
+) -> tuple[tuple[SemanticExpressionNode, SemanticExpressionNode], ...]:
     """Locate compound terms introduced for the eliminated bound variable.
 
     A path-preserving rule adapter knows that the old ``bvar:0`` occurrence
@@ -271,14 +273,9 @@ def _forall_substitution_target_paths(
         target_by_path.setdefault(
             _path_without_sequent_prefix(node.path), []
         ).append(node)
-    persistent_identities = {
-        node.identity
-        for node in source_nodes
-        if node.node_id.startswith("proof-context-") and node.identity
-    }
-    result: set[tuple[str | int, ...]] = set()
+    result: list[tuple[SemanticExpressionNode, SemanticExpressionNode]] = []
     for source in source_nodes:
-        if source.kind != "bvar" or source.identity != "bvar:0":
+        if source.kind != "bvar":
             continue
         mapped = _adapted_expression_path(
             _path_without_sequent_prefix(source.path), "forall-elimination"
@@ -289,14 +286,32 @@ def _forall_substitution_target_paths(
         if not targets:
             continue
         target = max(targets, key=_span_extent)
-        persistent_atomic = (
-            target.kind == "fvar"
-            and bool(target.identity)
-            and target.identity in persistent_identities
+        # Inner binders survive elimination of an enclosing forall. Their
+        # de Bruijn index and checked fingerprint remain identical. The
+        # eliminated binder, in contrast, lands on the root of its actual
+        # instantiation term (an application or literal). An atomic fvar is
+        # supplied by a persistent declaration and is handled by that
+        # declaration's certified COPY edge, not by a substitution ghost.
+        unchanged_inner_binder = (
+            target.kind == "bvar"
+            and source.fingerprint
+            and source.fingerprint == target.fingerprint
         )
-        if not persistent_atomic:
-            result.add(mapped)
-    return frozenset(result)
+        if not unchanged_inner_binder and target.kind != "fvar":
+            result.append((source, target))
+    return tuple(result)
+
+
+def _forall_substitution_target_paths(
+    source_nodes: tuple[SemanticExpressionNode, ...],
+    target_nodes: tuple[SemanticExpressionNode, ...],
+) -> frozenset[tuple[str | int, ...]]:
+    return frozenset(
+        _path_without_sequent_prefix(target.path)
+        for _source, target in _forall_substitution_occurrences(
+            source_nodes, target_nodes
+        )
+    )
 
 def _path_is_inside(
     path: tuple[str | int, ...],
@@ -448,6 +463,55 @@ def _direct_premise_atom_edges(
                 )
             )
     return result
+
+
+def _unique_direct_premise_subexpression_edges(
+    source_nodes: tuple[SemanticExpressionNode, ...],
+    target_nodes: tuple[SemanticExpressionNode, ...],
+    source_latex: str,
+    target_latex: str,
+) -> list[SemanticTransitionEdge]:
+    """Move a uniquely surviving checked subterm across a theorem rule.
+
+    Some theorems change the outer logical shell and reorder its operands—for
+    example ``(a < b → False)`` to ``b ≤ a``.  AST paths are intentionally
+    different, but the operand expressions are still the exact same kernel
+    terms.  Pair only a fingerprint/kind/rendering that occurs once on both
+    sides of an *immediate premise*.  This handles all such theorem rules
+    without pairing symbols merely because their glyphs look alike.
+    """
+
+    def groups(
+        nodes: tuple[SemanticExpressionNode, ...], latex: str
+    ) -> dict[tuple[str, str, str], list[SemanticExpressionNode]]:
+        result: dict[tuple[str, str, str], list[SemanticExpressionNode]] = {}
+        for node in nodes:
+            rendered = _rendered_expression_key(_node_latex(node, latex))
+            if not node.fingerprint or not rendered or node.kind in {
+                "sequent-punctuation",
+                "declaration-punctuation",
+            }:
+                continue
+            result.setdefault((node.kind, node.fingerprint, rendered), []).append(node)
+        return result
+
+    source_groups = groups(source_nodes, source_latex)
+    target_groups = groups(target_nodes, target_latex)
+    edges: list[SemanticTransitionEdge] = []
+    for key in source_groups.keys() & target_groups.keys():
+        sources = source_groups[key]
+        targets = target_groups[key]
+        if len(sources) != 1 or len(targets) != 1:
+            continue
+        edges.append(
+            SemanticTransitionEdge(
+                sources[0].node_id,
+                targets[0].node_id,
+                "verified-direct-premise-subexpression",
+                1.0,
+            )
+        )
+    return edges
 
 
 def _unique_identity_atom_edges(
@@ -649,6 +713,33 @@ def _proof_sequent_transition(
                 )
             )
 
+        # ``replace h`` shadows the old declaration name with this completed
+        # proof-definition. The two binders are not the same proof object, but
+        # their displayed name and colon are the same certified lexical slot.
+        # Preserve only that declaration label; the old proposition itself is
+        # deliberately not matched to the new one.
+        if alias.binder_name:
+            shadowed = [
+                binder
+                for binder in source_context
+                if binder.id < alias.id
+                and binder.binder_name == alias.binder_name
+            ]
+            if shadowed:
+                old = max(shadowed, key=lambda binder: binder.id)
+                for suffix in ("binder", "binder-colon"):
+                    source_id = f"proof-context-{old.id}/{suffix}"
+                    target_id = f"proof-context-{alias.id}/{suffix}"
+                    if source_id in source_by_id and target_id in target_by_id:
+                        edges.append(
+                            SemanticTransitionEdge(
+                                source_id,
+                                target_id,
+                                "verified-shadowed-local-label",
+                                1.0,
+                            )
+                        )
+
     used_source = {edge.source_node_id for edge in edges}
     used_target = {edge.target_node_id for edge in edges}
 
@@ -670,7 +761,21 @@ def _proof_sequent_transition(
     # also contains visible aliases of hidden descendants; applying a forall
     # path shift to such an alias skips the intervening derivation and can
     # send an equal-looking symbol to a logically unrelated occurrence.
-    if source_step.id in target_step.premises:
+    # Lean commonly inserts a proof-valued ``let``/``have`` between a
+    # completed proposition and its first use.  ``completed_aliases`` above
+    # are not fuzzy matches: they are newly introduced proof declarations
+    # whose checked proposition is exactly the previous conclusion.  When an
+    # alias is an immediate premise of this inference, the previous bottom
+    # row is therefore a certified structural source as well.  Without this
+    # bridge the renderer can move the theorem into context, but has no proof
+    # edge with which to instantiate it and consequently writes the entire
+    # specialized conclusion from scratch.
+    direct_completed_alias_ids = {
+        alias.id
+        for alias in completed_aliases
+        if alias.id in target_step.premises
+    }
+    if source_step.id in target_step.premises or direct_completed_alias_ids:
         structural_sources.append(regular_source)
     for premise_id in target_step.premises:
         prefix = f"proof-context-{premise_id}/"
@@ -709,6 +814,14 @@ def _proof_sequent_transition(
             structural_edges.extend(
                 _direct_premise_atom_edges(premise_nodes, regular_target)
             )
+            structural_edges.extend(
+                _unique_direct_premise_subexpression_edges(
+                    premise_nodes,
+                    regular_target,
+                    source_sequent,
+                    target_sequent,
+                )
+            )
     if substitution_target_paths:
         structural_edges = [
             edge
@@ -718,6 +831,22 @@ def _proof_sequent_transition(
                 substitution_target_paths,
             )
         ]
+        substitution_pairs = {
+            (source.node_id, target.node_id)
+            for premise_nodes in structural_sources
+            for source, target in _forall_substitution_occurrences(
+                premise_nodes, regular_target
+            )
+        }
+        structural_edges.extend(
+            SemanticTransitionEdge(
+                source_id,
+                target_id,
+                "verified-forall-substitution",
+                1.0,
+            )
+            for source_id, target_id in sorted(substitution_pairs)
+        )
     edges.extend(structural_edges)
     used_source.update(edge.source_node_id for edge in structural_edges)
     used_target.update(edge.target_node_id for edge in structural_edges)
@@ -791,6 +920,84 @@ def _proof_sequent_transition(
                     old.node_id,
                     new.node_id,
                     "verified-binder-introduction",
+                    1.0,
+                )
+                edges.append(edge)
+                used_source.add(edge.source_node_id)
+                used_target.add(edge.target_node_id)
+
+    if target_step.rule == "forall-elimination":
+        # Opening a universal formula for a fresh local variable is the exact
+        # inverse binder motion of forall-introduction.  The forall body is
+        # handled by the structural path adapter above; here the bound name,
+        # colon and domain become the new ``x : A`` context declaration.  No
+        # token-text search is involved: both sides are tied to the checked
+        # quantifier and the newly opened eigenvariable.
+        source_context_ids = {binder.id for binder in source_context}
+        added_binders = [
+            binder
+            for binder in target_context
+            if binder.kind == "eigenvariable"
+            and binder.id not in source_context_ids
+        ]
+        outer_foralls = [
+            node
+            for node in regular_source
+            if node.kind == "forall" and node.path == ("0",)
+        ]
+        if len(added_binders) == 1 and len(outer_foralls) == 1:
+            added = added_binders[0]
+            outer = outer_foralls[0]
+            target_prefix = f"proof-context-{added.id}"
+            source_children = [
+                node for node in regular_source if node.parent_id == outer.node_id
+            ]
+            source_binder = next(
+                (node for node in source_children if node.kind == "declaration"),
+                None,
+            )
+            source_colon = next(
+                (
+                    node
+                    for node in source_children
+                    if node.kind == "declaration-punctuation"
+                ),
+                None,
+            )
+            source_domain = next(
+                (
+                    node
+                    for node in source_children
+                    if node.path == (*outer.path, "0")
+                ),
+                None,
+            )
+            target_binder = target_by_id.get(f"{target_prefix}/binder")
+            target_colon = target_by_id.get(f"{target_prefix}/binder-colon")
+            target_domains = [
+                node
+                for node in target_nodes
+                if node.node_id.startswith(target_prefix + "/")
+                and node.path == ("context", added.id, "0")
+            ]
+            target_domain = (
+                target_domains[0] if len(target_domains) == 1 else None
+            )
+            for old, new in (
+                (source_binder, target_binder),
+                (source_colon, target_colon),
+                (source_domain, target_domain),
+            ):
+                if old is None or new is None:
+                    continue
+                old_latex = _node_latex(old, source_sequent)
+                new_latex = _node_latex(new, target_sequent)
+                if not old_latex or old_latex != new_latex:
+                    continue
+                edge = SemanticTransitionEdge(
+                    old.node_id,
+                    new.node_id,
+                    "verified-binder-elimination",
                     1.0,
                 )
                 edges.append(edge)
