@@ -92,7 +92,9 @@ def render_full(
             "opengl",
         )
         fallback_marker = cache_root / "renderer-fallback" / f"full-{opengl_key}.txt"
-        if (use_cache and fallback_marker.exists()) or not _opengl_safe_for_movie(frames):
+        if (use_cache and fallback_marker.exists()) or not _opengl_safe_for_movie(
+            frames
+        ):
             active_renderer = "cairo"
     else:
         fallback_marker = None
@@ -107,7 +109,9 @@ def render_full(
         active_renderer,
     )
     silent_master = cache_root / "full" / f"{key}.mp4"
-    cache_hit = use_cache and silent_master.exists() and silent_master.stat().st_size > 0
+    cache_hit = (
+        use_cache and silent_master.exists() and silent_master.stat().st_size > 0
+    )
 
     if not cache_hit:
         try:

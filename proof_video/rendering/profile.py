@@ -270,9 +270,9 @@ def _transitions_for_range(
 
 
 def _stable_json(value: Any) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
 
 
 def semantic_chunks(
@@ -295,11 +295,17 @@ def semantic_chunks(
         for transition in transitions:
             state_indexes.add(int(transition["fromState"]))
             state_indexes.add(int(transition["toState"]))
-        local_states = [states[index] for index in sorted(state_indexes) if index < len(states)]
+        local_states = [
+            states[index] for index in sorted(state_indexes) if index < len(states)
+        ]
         payload: dict[str, Any] = {
             "contract": timeline.get("rendererContract"),
             "renderer": renderer_fingerprint,
-            "dimensions": [timeline.get("width"), timeline.get("height"), timeline.get("fps")],
+            "dimensions": [
+                timeline.get("width"),
+                timeline.get("height"),
+                timeline.get("fps"),
+            ],
             "range": [start, end],
             "states": local_states,
             "transitions": transitions,

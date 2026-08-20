@@ -24,6 +24,8 @@ export type TokenBox = FlatToken & LayoutBoxData;
 export type StateLayout = {
   tokens: FlatToken[];
   visualRows: FlatToken[][];
+  visualRowOffsets: number[];
+  totalRowUnits: number;
 };
 
 const renderedMath = new Map<string, string>();
@@ -74,11 +76,23 @@ const preferredLineBreaks = new Set([
 export const layoutState = (state: ProofState): StateLayout => {
   const tokens: FlatToken[] = [];
   const visualRows: FlatToken[][] = [];
+  const visualRowOffsets: number[] = [];
   let globalIndex = 0;
+  let verticalUnits = 0;
+  let previousCardId: string | undefined;
   const maximumUnits = 68;
   const minimumBreakUnits = 24;
   for (let rowIndex = 0; rowIndex < state.rows.length; rowIndex++) {
     const row = state.rows[rowIndex];
+    if (
+      visualRows.length > 0
+      && row.goalCardId !== undefined
+      && previousCardId !== undefined
+      && row.goalCardId !== previousCardId
+    ) {
+      verticalUnits += 0.48;
+    }
+    previousCardId = row.goalCardId ?? previousCardId;
     const pending = row.tokens.map(([latex]) => ({latex, index: globalIndex++}));
     let offset = 0;
     while (offset < pending.length) {
@@ -101,11 +115,18 @@ export const layoutState = (state: ProofState): StateLayout => {
         index, latex, row, rowIndex, visualRowIndex,
       }));
       visualRows.push(line);
+      visualRowOffsets.push(verticalUnits);
+      verticalUnits += 1;
       tokens.push(...line);
       offset = cursor;
     }
   }
-  return {tokens: tokens.sort((a, b) => a.index - b.index), visualRows};
+  return {
+    tokens: tokens.sort((a, b) => a.index - b.index),
+    visualRows,
+    visualRowOffsets,
+    totalRowUnits: Math.max(1, verticalUnits),
+  };
 };
 
 export const fontSizeFor = (layout: StateLayout, width: number, height: number): number => {
@@ -116,7 +137,7 @@ export const fontSizeFor = (layout: StateLayout, width: number, height: number):
     )),
   );
   const byWidth = (width * 0.84) / (longest * 0.58);
-  const byHeight = (height * 0.84) / Math.max(3, layout.visualRows.length * 1.3);
+  const byHeight = (height * 0.84) / Math.max(3, layout.totalRowUnits * 1.3);
   return Math.max(2, Math.min(height * 0.094, byWidth, byHeight));
 };
 
@@ -128,7 +149,7 @@ export const centeredTopFor = (
   const rowHeight = Math.max(fontSize * 1.34, 13);
   const visibleHeight = layout.visualRows.length <= 1
     ? fontSize * 1.22
-    : (layout.visualRows.length - 1) * rowHeight + fontSize * 1.22;
+    : Math.max(0, layout.totalRowUnits - 1) * rowHeight + fontSize * 1.22;
   return (height - visibleHeight) / 2;
 };
 
@@ -179,7 +200,9 @@ export const MeasurementState: React.FC<{
       <div
         key={`${side}-${visualRowIndex}`}
         style={{
-          position: 'absolute', left: 0, top: top + visualRowIndex * rowHeight,
+          position: 'absolute',
+          left: (line[0]?.row.goalDepth ?? 0) * fontSize * 0.72,
+          top: top + layout.visualRowOffsets[visualRowIndex] * rowHeight,
           display: 'flex', alignItems: 'baseline', width: 'max-content',
           color: line[0]?.row.kind === 'context' ? dimChalk : chalk,
           fontSize, lineHeight: 1.22, whiteSpace: 'nowrap',

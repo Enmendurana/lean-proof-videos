@@ -47,7 +47,9 @@ class SourceManager:
         result: list[str] = []
         for path in self.project_root.rglob("*.lean"):
             relative = path.relative_to(self.project_root)
-            if any(part in excluded or part.startswith(".test-") for part in relative.parts):
+            if any(
+                part in excluded or part.startswith(".test-") for part in relative.parts
+            ):
                 continue
             result.append(relative.as_posix())
         return sorted(result, key=str.casefold)

@@ -18,10 +18,14 @@ def _fake_project(root: Path) -> None:
         (remotion / relative).write_text(relative, encoding="utf-8")
 
 
-def test_remotion_render_routes_timeline_and_atomically_finishes(monkeypatch, tmp_path) -> None:
+def test_remotion_render_routes_timeline_and_atomically_finishes(
+    monkeypatch, tmp_path
+) -> None:
     project = tmp_path / "project"
     _fake_project(project)
-    monkeypatch.setattr("proof_video.remotion_render.shutil.which", lambda _name: "node")
+    monkeypatch.setattr(
+        "proof_video.remotion_render.shutil.which", lambda _name: "node"
+    )
 
     calls = []
 

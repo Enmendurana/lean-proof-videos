@@ -77,7 +77,7 @@ def test_two_path_command_passes_detected_theorem_to_general_cli(
     assert command[command.index("--output") + 1] == str(output.resolve())
     assert command[command.index("--toolchain-backend") + 1] == "auto"
     assert "--trace-backend" not in command
-    assert command[command.index("--trace-mode") + 1] == "proof-term"
+    assert command[command.index("--trace-mode") + 1] == "hybrid"
     assert "--resume" not in command
     assert "--preview" not in command
 
@@ -92,7 +92,9 @@ def test_resumable_marker_enables_long_proof_profile(
         encoding="utf-8",
     )
     calls: list[list[str]] = []
-    monkeypatch.setattr(render_proof, "render_main", lambda argv: calls.append(argv) or 0)
+    monkeypatch.setattr(
+        render_proof, "render_main", lambda argv: calls.append(argv) or 0
+    )
 
     assert render_proof.main([str(source), str(output)]) == 0
     assert "--resume" in calls[0]
@@ -106,14 +108,33 @@ def test_explicit_scalable_granularity_keeps_incremental_backend(
     output = tmp_path / "movie.mp4"
     source.write_text("theorem demo : True := by trivial\n", encoding="utf-8")
     calls: list[list[str]] = []
-    monkeypatch.setattr(render_proof, "render_main", lambda argv: calls.append(argv) or 0)
+    monkeypatch.setattr(
+        render_proof, "render_main", lambda argv: calls.append(argv) or 0
+    )
 
     assert (
-        render_proof.main(
-            [str(source), str(output), "--trace-granularity", "scalable"]
-        )
+        render_proof.main([str(source), str(output), "--trace-granularity", "scalable"])
         == 0
     )
     command = calls[0]
     assert command[command.index("--toolchain-backend") + 1] == "auto"
     assert command[command.index("--trace-mode") + 1] == "hybrid"
+
+
+def test_explicit_fine_granularity_selects_proof_term_compatibility(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "Proof.lean"
+    output = tmp_path / "movie.mp4"
+    source.write_text("theorem demo : True := by trivial\n", encoding="utf-8")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        render_proof, "render_main", lambda argv: calls.append(argv) or 0
+    )
+
+    assert (
+        render_proof.main([str(source), str(output), "--trace-granularity", "fine"])
+        == 0
+    )
+    command = calls[0]
+    assert command[command.index("--trace-mode") + 1] == "proof-term"

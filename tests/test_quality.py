@@ -10,6 +10,7 @@ from proof_video.models import (
     SemanticTransitionEdge,
 )
 from proof_video.quality import build_movie_quality_report, build_quality_report
+from proof_video.proof.state import Expression
 
 
 def _trace(with_edge: bool = True) -> dict:
@@ -34,12 +35,20 @@ def _trace(with_edge: bool = True) -> dict:
                                     },
                                     "results": [
                                         {
-                                            "goal": {"latexTarget": "f(x)=f(x)", "latexContext": []},
+                                            "goal": {
+                                                "latexTarget": "f(x)=f(x)",
+                                                "latexContext": [],
+                                            },
                                             "semanticTransition": {
                                                 "sourceNodes": [source],
                                                 "targetNodes": [target],
                                                 "edges": (
-                                                    [{"sourceNodeId": "s", "targetNodeId": "t"}]
+                                                    [
+                                                        {
+                                                            "sourceNodeId": "s",
+                                                            "targetNodeId": "t",
+                                                        }
+                                                    ]
                                                     if with_edge
                                                     else []
                                                 ),
@@ -94,7 +103,11 @@ def test_movie_quality_audits_renderer_facing_proof_trace_transitions() -> None:
             Frame(
                 1,
                 "rw",
-                (Goal("g1", "", latex_target="f(x)+0", semantic_transition=transition),),
+                (
+                    Goal(
+                        "g1", "", latex_target="f(x)+0", semantic_transition=transition
+                    ),
+                ),
             ),
         ),
     )
@@ -113,12 +126,26 @@ def test_movie_quality_treats_certified_hybrid_chapter_start_as_boundary() -> No
             Frame(
                 0,
                 "",
-                (Goal("chapter-0/g0", "", latex_target="A", lineage_id="chapter-0/goal-0"),),
+                (
+                    Goal(
+                        "chapter-0/g0",
+                        "",
+                        latex_target="A",
+                        lineage_id="chapter-0/goal-0",
+                    ),
+                ),
             ),
             Frame(
                 1,
                 "",
-                (Goal("chapter-1/g0", "", latex_target="B", lineage_id="chapter-1/goal-0"),),
+                (
+                    Goal(
+                        "chapter-1/g0",
+                        "",
+                        latex_target="B",
+                        lineage_id="chapter-1/goal-0",
+                    ),
+                ),
             ),
         ),
         hybrid_trace={"schemaVersion": "3.1"},
@@ -128,3 +155,60 @@ def test_movie_quality_treats_certified_hybrid_chapter_start_as_boundary() -> No
 
     assert report["valid"], report["errors"]
     assert report["summary"]["checkedTransitions"] == 0
+
+
+def test_movie_quality_audits_canonical_replay_and_visual_plan() -> None:
+    old = Expression("old", "fp:A", lean="A", latex="A")
+    new = Expression("new", "fp:B", lean="B", latex="B")
+    movie = Movie(
+        "canonical-demo",
+        (
+            Frame(
+                0,
+                "",
+                (Goal("g", "A", latex_target="A", canonical_target=old),),
+                canonical_abi=5,
+            ),
+            Frame(
+                1,
+                "custom_tactic",
+                (Goal("g", "B", latex_target="B", canonical_target=new),),
+                canonical_abi=5,
+            ),
+        ),
+    )
+
+    report = build_movie_quality_report(movie)
+
+    assert report["valid"], report["errors"]
+    assert report["summary"]["canonicalTransitions"] == 1
+    assert report["summary"]["checkedTransitions"] == 1
+    assert report["summary"]["visualPrimitives"] > 0
+    assert report["summary"]["tacticAdapters"] == {"canonical-state-delta": 1}
+
+
+def test_movie_quality_rejects_incomplete_native_canonical_frame() -> None:
+    movie = Movie(
+        "incomplete-canonical",
+        (
+            Frame(
+                0,
+                "",
+                (Goal("g", "A", latex_target="A"),),
+                canonical_abi=5,
+            ),
+            Frame(
+                1,
+                "custom_tactic",
+                (Goal("g", "B", latex_target="B"),),
+                canonical_abi=5,
+            ),
+        ),
+    ).with_canonical_timeline()
+
+    report = build_movie_quality_report(movie)
+
+    assert not report["valid"]
+    assert "missing a structured canonical goal expression" in " ".join(
+        report["errors"]
+    )

@@ -146,9 +146,7 @@ def _content_bbox_at(path: Path, timestamp: float) -> tuple[int, int] | None:
     return int(match.group("width")), int(match.group("height"))
 
 
-def _progressive_initial_write(
-    path: Path, start: float, end: float
-) -> bool:
+def _progressive_initial_write(path: Path, start: float, end: float) -> bool:
     """Distinguish sparse chalk writing from a genuinely blank intro.
 
     FFmpeg's black detector measures the percentage of bright pixels.  A
@@ -167,9 +165,8 @@ def _progressive_initial_write(
         return late[0] > 0 and late[1] > 0
     early_area = early[0] * early[1]
     late_area = late[0] * late[1]
-    return (
-        late_area >= max(1, early_area) * 2
-        and (late[0] >= early[0] * 1.25 or late[1] >= early[1] * 1.25)
+    return late_area >= max(1, early_area) * 2 and (
+        late[0] >= early[0] * 1.25 or late[1] >= early[1] * 1.25
     )
 
 
@@ -214,9 +211,7 @@ def build_visual_quality_report(
     width = int(stream.get("width", 0) or 0)
     height = int(stream.get("height", 0) or 0)
     duration = float(
-        stream.get("duration")
-        or probe.get("format", {}).get("duration")
-        or 0.0
+        stream.get("duration") or probe.get("format", {}).get("duration") or 0.0
     )
     if not stream:
         errors.append("ffprobe could not read the rendered video stream")
@@ -225,7 +220,9 @@ def build_visual_quality_report(
             f"rendered resolution is {width}x{height}, expected "
             f"{expected_width}x{expected_height}"
         )
-    if duration and abs(duration - expected_duration) > max(0.5, expected_duration * 0.03):
+    if duration and abs(duration - expected_duration) > max(
+        0.5, expected_duration * 0.03
+    ):
         errors.append(
             f"rendered duration is {duration:.2f}s, expected {expected_duration:.2f}s"
         )
@@ -257,7 +254,9 @@ def build_visual_quality_report(
             f"({start:.2f}s–{end:.2f}s)"
         )
     if black and not prolonged:
-        warnings.append(f"{len(black)} short near-empty blackboard interval(s) detected")
+        warnings.append(
+            f"{len(black)} short near-empty blackboard interval(s) detected"
+        )
     return {
         "schemaVersion": 1,
         "valid": not errors,
@@ -283,11 +282,14 @@ def write_visual_quality_report(
     write_json(json_path, report)
     duration = float(report.get("media", {}).get("duration", 0.0))
     sheet = _contact_sheet(video, sheet_path, duration)
-    items = "".join(
-        f"<li class='{kind}'>{escape(message)}</li>"
-        for kind in ("error", "warning")
-        for message in report[f"{kind}s"]
-    ) or "<li class='ok'>No media or occupancy violations.</li>"
+    items = (
+        "".join(
+            f"<li class='{kind}'>{escape(message)}</li>"
+            for kind in ("error", "warning")
+            for message in report[f"{kind}s"]
+        )
+        or "<li class='ok'>No media or occupancy violations.</li>"
+    )
     image = f"<img src='{sheet.name}' alt='sampled rendered frames'>" if sheet else ""
     html_path.write_text(
         "<!doctype html><meta charset='utf-8'><title>Rendered proof QA</title>"

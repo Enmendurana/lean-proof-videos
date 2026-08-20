@@ -3,7 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from proof_video.proof.effects import ProofTransition
+from proof_video.proof.state import Expression, LocalDecl, ProofState
+
+if TYPE_CHECKING:
+    from proof_video.presentation.model import SemanticVisualPlan
+    from proof_video.proof.completion import TerminalCompletion
+
+from proof_video.proof.correspondence import CorrespondenceEdge, ExplicitGoalEdge
+
 
 @dataclass(frozen=True)
 class LatexHypothesis:
@@ -47,6 +57,7 @@ class RuleAnnotation:
     substitution_transition: SemanticTransition | None = None
     presentation_goals: tuple["Goal", ...] = ()
 
+
 @dataclass(frozen=True)
 class IndexMaps:
     """Stable character identities emitted by the upstream Lean matcher."""
@@ -62,6 +73,7 @@ class IndexMaps:
             source_to_target=tuple(value.get("s1_to_s2", ())),
             target_to_source=tuple(value.get("s2_to_s1", ())),
         )
+
 
 @dataclass(frozen=True)
 class SemanticSpan:
@@ -80,6 +92,7 @@ class SemanticSpan:
     def valid(self) -> bool:
         return 0 <= self.start < self.end
 
+
 @dataclass(frozen=True)
 class SemanticExpressionNode:
     node_id: str
@@ -96,7 +109,9 @@ class SemanticExpressionNode:
         if not raw_spans and value.get("latexSpan") is not None:
             raw_spans = (value["latexSpan"],)
         raw_path = value.get("path", ())
-        path = tuple(raw_path.split(".")) if isinstance(raw_path, str) else tuple(raw_path)
+        path = (
+            tuple(raw_path.split(".")) if isinstance(raw_path, str) else tuple(raw_path)
+        )
         return cls(
             node_id=str(value.get("id", value.get("nodeId", ""))),
             kind=str(value.get("kind", "")),
@@ -106,6 +121,7 @@ class SemanticExpressionNode:
             path=path,
             latex_spans=tuple(SemanticSpan.from_json(span) for span in raw_spans),
         )
+
 
 @dataclass(frozen=True)
 class SemanticExpression:
@@ -118,12 +134,15 @@ class SemanticExpression:
         raw_nodes = value.get("nodes", ()) if isinstance(value, dict) else value
         return cls(tuple(SemanticExpressionNode.from_json(node) for node in raw_nodes))
 
+
 @dataclass(frozen=True)
 class SemanticTransitionEdge:
     source_node_id: str
     target_node_id: str
     reason: str = ""
     confidence: float | None = None
+    relation: str = ""
+    provenance: str = ""
 
     @classmethod
     def from_json(cls, value: dict[str, Any]) -> "SemanticTransitionEdge":
@@ -136,6 +155,8 @@ class SemanticTransitionEdge:
                 if value.get("confidence") is not None
                 else None
             ),
+            relation=str(value.get("relation", "")),
+            provenance=str(value.get("provenance", "")),
         )
 
 
@@ -201,12 +222,17 @@ class SemanticTransition:
             adapter=str(value.get("adapter", "")),
             proof_fingerprint=str(value.get("proofFingerprint", "")),
             proof_term=str(value.get("proofTerm", "")),
-            proof_descendants=tuple(str(item) for item in value.get("proofDescendants", ())),
+            proof_descendants=tuple(
+                str(item) for item in value.get("proofDescendants", ())
+            ),
             proof_premises=tuple(str(item) for item in value.get("proofPremises", ())),
-            proof_constants=tuple(str(item) for item in value.get("proofConstants", ())),
+            proof_constants=tuple(
+                str(item) for item in value.get("proofConstants", ())
+            ),
             goal_diff=GoalDiffEvidence.from_json(value.get("goalDiff")),
             fallback_reason=value.get("fallbackReason"),
         )
+
 
 @dataclass(frozen=True)
 class Goal:
@@ -220,6 +246,11 @@ class Goal:
     latex_index_maps: IndexMaps | None = None
     semantic_transition: SemanticTransition | None = None
     rule_annotations: tuple[RuleAnnotation, ...] = ()
+    semantic_nodes: tuple[SemanticExpressionNode, ...] = ()
+    canonical_locals: tuple[LocalDecl, ...] = ()
+    canonical_target: Expression | None = None
+    branch_kind: str = ""
+    branch_index: int | None = None
 
     @classmethod
     def from_json(
@@ -232,6 +263,13 @@ class Goal:
         latex_index_maps: dict[str, Any] | None = None,
         semantic_transition: dict[str, Any] | None = None,
     ) -> "Goal":
+        parsed_transition = SemanticTransition.from_json(semantic_transition)
+        semantic_nodes = tuple(
+            SemanticExpressionNode.from_json(node)
+            for node in value.get("semanticNodes", ())
+        )
+        if not semantic_nodes and parsed_transition is not None:
+            semantic_nodes = parsed_transition.target.nodes
         return cls(
             goal_id=value["goalId"],
             state=value["state"],
@@ -244,7 +282,7 @@ class Goal:
             parent_goal_id=parent_goal_id,
             index_maps=IndexMaps.from_json(index_maps),
             latex_index_maps=IndexMaps.from_json(latex_index_maps),
-            semantic_transition=SemanticTransition.from_json(semantic_transition),
+            semantic_transition=parsed_transition,
             rule_annotations=tuple(
                 RuleAnnotation(
                     key=str(item.get("key", "")),
@@ -253,11 +291,23 @@ class Goal:
                 )
                 for item in value.get("ruleAnnotations", ())
             ),
+            semantic_nodes=semantic_nodes,
+            canonical_locals=tuple(
+                LocalDecl.from_json(item) for item in value.get("canonicalLocals", ())
+            ),
+            canonical_target=Expression.from_json(value.get("canonicalTarget")),
+            branch_kind=str(value.get("branchKind", "")),
+            branch_index=(
+                int(value["branchIndex"])
+                if value.get("branchIndex") is not None
+                else None
+            ),
         )
 
     def latex_state(self) -> str:
         context = [hypothesis.render_latex() for hypothesis in self.latex_context]
         return "\n".join(context + [rf"\vdash\;{self.latex_target or ''}"])
+
 
 @dataclass(frozen=True)
 class Frame:
@@ -265,10 +315,34 @@ class Frame:
     tactic: str
     goals: tuple[Goal, ...]
     focus_goals: tuple[Goal, ...] = ()
+    proof_state: ProofState | None = None
+    proof_transition: ProofTransition | None = None
+    visual_plan: SemanticVisualPlan | None = None
+    goal_lineage: tuple[ExplicitGoalEdge, ...] = ()
+    canonical_correspondence: tuple[CorrespondenceEdge, ...] = ()
+    canonical_abi: int = 0
+    capabilities: tuple[str, ...] = ()
+    terminal_completion: TerminalCompletion | None = None
 
     @property
     def display_goals(self) -> tuple[Goal, ...]:
         return self.focus_goals or self.goals
+
+
+def has_native_canonical_observation(frame: Frame) -> bool:
+    """Whether ``frame`` carries a complete native canonical frontier.
+
+    ABI 5 is authoritative only when every live goal contains Lean's
+    structured target expression.  Keeping this predicate in the schema
+    prevents adapters, QA and renderers from silently choosing different
+    routes for a partially migrated trace.  The empty frontier is complete;
+    it is the canonical representation of a closing action.
+    """
+
+    return frame.canonical_abi >= 5 and all(
+        goal.canonical_target is not None for goal in frame.goals
+    )
+
 
 @dataclass(frozen=True)
 class ProofStep:

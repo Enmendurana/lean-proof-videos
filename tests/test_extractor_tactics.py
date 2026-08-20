@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import shutil
 from pathlib import Path
 
@@ -12,18 +14,29 @@ from proof_video.lean_export import export_trace
 ROOT = Path(__file__).resolve().parents[1]
 LEAN_FIXTURE = ROOT / "Input" / "ExtractorTacticFixtures.lean"
 THEOREM = "ExtractorTacticFixtures.tacticAdapters"
+TRACE_ARTIFACT = ROOT / ".pytest_cache" / "extractor-tactic-fixtures-trace.json"
 
 
 @pytest.fixture(scope="module")
 def tactic_trace() -> dict:
+    supplied_trace = os.environ.get("EXTRACTOR_TACTIC_FIXTURE_TRACE")
+    if supplied_trace:
+        return json.loads(Path(supplied_trace).read_text(encoding="utf-8"))
     if shutil.which("lake") is None:
         pytest.skip("Lean integration fixture requires lake")
     _restore_windows_path()
-    return export_trace(ROOT, LEAN_FIXTURE, THEOREM, "tactic")
+    trace = export_trace(ROOT, LEAN_FIXTURE, THEOREM, "tactic")
+    TRACE_ARTIFACT.parent.mkdir(parents=True, exist_ok=True)
+    pending = TRACE_ARTIFACT.with_suffix(".tmp")
+    pending.write_text(json.dumps(trace, ensure_ascii=False), encoding="utf-8")
+    pending.replace(TRACE_ARTIFACT)
+    return trace
 
 
 def _action(trace: dict, exact_text: str) -> dict:
-    return next(action for action in trace["actions"] if action["tacticText"] == exact_text)
+    return next(
+        action for action in trace["actions"] if action["tacticText"] == exact_text
+    )
 
 
 def _action_containing(trace: dict, text: str) -> dict:
@@ -61,13 +74,18 @@ def _latex_state(goal: dict) -> str:
     context = []
     for hypothesis in goal.get("latexContext", []):
         name = hypothesis["name"].replace("_", r"\_")
-        context.append(f'{name} \\;:\\; {hypothesis["latex"]}')
-    return "\n".join(context + [rf'\vdash\;{goal.get("latexTarget", "")}'])
+        context.append(f"{name} \\;:\\; {hypothesis['latex']}")
+    return "\n".join(context + [rf"\vdash\;{goal.get('latexTarget', '')}"])
 
 
 def _goals_by_id(trace: dict) -> dict[str, dict]:
     goals = {trace["startGoal"]["goalId"]: trace["startGoal"]}
     for action in trace["actions"]:
+        # ABI 5 action frontiers are the authoritative observation timeline.
+        # In particular a resumed continuation can be a GoalAction source
+        # without first appearing as a legacy result of the preceding action.
+        for goal in (*action.get("beforeState", ()), *action.get("afterState", ())):
+            goals[goal["goalId"]] = goal
         for goal_action in action["goalActions"]:
             for result in goal_action["results"]:
                 goals[result["goal"]["goalId"]] = result["goal"]
@@ -82,7 +100,12 @@ def _goals_by_id(trace: dict) -> dict[str, dict]:
         ("subst b", "⊢ a + a = a + a", "subst", "goal-reduction"),
         ("change a + a = a + a", "⊢ a + a = a + a", "change", "goal-reduction"),
         ("show b + b = b + b", "⊢ b + b = b + b", "change", "goal-reduction"),
-        ("ring_nf at hRingNormal ⊢", "⊢ 1 + x * 2 + x ^ 2 = 0", "ring", "equality-transport"),
+        (
+            "ring_nf at hRingNormal ⊢",
+            "⊢ 1 + x * 2 + x ^ 2 = 0",
+            "ring",
+            "equality-transport",
+        ),
     ],
 )
 def test_in_place_tactics_emit_one_mapped_successor(
@@ -131,7 +154,8 @@ def test_intro_preserves_the_body_and_moves_the_binder_into_context(
     target = {node["id"]: node for node in transition["targetNodes"]}
 
     binder_edges = [
-        edge for edge in transition["edges"]
+        edge
+        for edge in transition["edges"]
         if edge["reason"] == "verified-intro-binder"
     ]
     assert len(binder_edges) == 1
@@ -142,8 +166,7 @@ def test_intro_preserves_the_body_and_moves_the_binder_into_context(
     assert binder_source["kind"] == binder_target["kind"] == "declaration"
 
     body_edges = [
-        edge for edge in transition["edges"]
-        if edge["reason"] == "verified-intro-body"
+        edge for edge in transition["edges"] if edge["reason"] == "verified-intro-body"
     ]
     assert body_edges
     assert any(
@@ -152,8 +175,7 @@ def test_intro_preserves_the_body_and_moves_the_binder_into_context(
         for edge in body_edges
     )
     assert any(
-        edge["reason"] == "verified-intro-binder-use"
-        for edge in transition["edges"]
+        edge["reason"] == "verified-intro-binder-use" for edge in transition["edges"]
     )
 
 
@@ -170,7 +192,8 @@ def test_intro_maps_every_quantifier_colon_to_its_own_context_declaration(
     target_latex = _latex_state(result["goal"])
 
     punctuation_edges = [
-        edge for edge in transition["edges"]
+        edge
+        for edge in transition["edges"]
         if edge["reason"] == "verified-intro-binder-punctuation"
     ]
     assert len(punctuation_edges) == 2
@@ -183,8 +206,8 @@ def test_intro_maps_every_quantifier_colon_to_its_own_context_declaration(
         assert target_node["path"].endswith(".colon")
         source_span = source_node["latexSpans"][0]
         target_span = target_node["latexSpans"][0]
-        assert source_latex[source_span["start"]:source_span["end"]] == ":"
-        assert target_latex[target_span["start"]:target_span["end"]] == ":"
+        assert source_latex[source_span["start"] : source_span["end"]] == ":"
+        assert target_latex[target_span["start"] : target_span["end"]] == ":"
 
 
 def test_unchanged_quantifier_symbols_keep_their_semantic_identity(
@@ -198,7 +221,8 @@ def test_unchanged_quantifier_symbols_keep_their_semantic_identity(
         for edge in transition["edges"]
     }
     source_quantifiers = [
-        node for node in source.values()
+        node
+        for node in source.values()
         if node["kind"] == "quantifier-symbol" and node["latexSpans"]
     ]
 
@@ -208,7 +232,8 @@ def test_unchanged_quantifier_symbols_keep_their_semantic_identity(
     assert len(source_quantifiers) >= 2
     for source_node in source_quantifiers:
         matching_targets = [
-            node for node in target.values()
+            node
+            for node in target.values()
             if node["identity"] == source_node["identity"]
         ]
         assert len(matching_targets) == 1
@@ -234,7 +259,9 @@ def test_branching_tactics_emit_two_distinct_successors(
     # Nested case/induction branches can already be assigned by the enclosing
     # TacticInfo's mctxAfter. The extractor still records the actual descendant
     # set (possibly empty) instead of inferring it from goalsAfter.
-    assert all(isinstance(_semantic(result)["proofDescendants"], list) for result in results)
+    assert all(
+        isinstance(_semantic(result)["proofDescendants"], list) for result in results
+    )
     assert all(_semantic(result)["proofTerm"] for result in results)
 
 
@@ -272,9 +299,19 @@ def test_semantic_node_spans_are_inside_their_canonical_latex_states(
                         for span in node["latexSpans"]:
                             assert 0 <= span["start"] < span["end"] <= len(latex)
                             fragment = latex[span["start"] : span["end"]]
-                            if node["kind"] == "fvar" and len(fragment) == 1 and fragment.isalnum():
-                                previous = latex[span["start"] - 1] if span["start"] else ""
-                                following = latex[span["end"]] if span["end"] < len(latex) else ""
+                            if (
+                                node["kind"] == "fvar"
+                                and len(fragment) == 1
+                                and fragment.isalnum()
+                            ):
+                                previous = (
+                                    latex[span["start"] - 1] if span["start"] else ""
+                                )
+                                following = (
+                                    latex[span["end"]]
+                                    if span["end"] < len(latex)
+                                    else ""
+                                )
                                 assert previous != "\\"
                                 assert not previous.isalnum()
                                 assert not following.isalnum()
@@ -291,9 +328,11 @@ def test_duplicate_occurrences_have_unambiguous_semantic_mappings(
 
     source_nodes = {node["id"]: node for node in transition["sourceNodes"]}
     target_nodes = {node["id"]: node for node in transition["targetNodes"]}
-    source_latex = _latex_state(_goals_by_id(tactic_trace)[
-        _action(tactic_trace, "rw [hfg]")["goalActions"][0]["startGoalId"]
-    ])
+    source_latex = _latex_state(
+        _goals_by_id(tactic_trace)[
+            _action(tactic_trace, "rw [hfg]")["goalActions"][0]["startGoalId"]
+        ]
+    )
     target_latex = _latex_state(result["goal"])
 
     def occurrences(nodes: dict[str, dict], latex: str, glyph: str) -> list[dict]:
@@ -302,7 +341,10 @@ def test_duplicate_occurrences_have_unambiguous_semantic_mappings(
             for node in nodes.values()
             if node["kind"] == "fvar"
             and node["latexSpans"]
-            and any(latex[span["start"] : span["end"]] == glyph for span in node["latexSpans"])
+            and any(
+                latex[span["start"] : span["end"]] == glyph
+                for span in node["latexSpans"]
+            )
             and node["latexSpans"][0]["start"] >= latex.rfind(r"\vdash\;")
         ]
 
@@ -345,13 +387,17 @@ def test_tactic_explanations_are_bound_to_the_elaborated_assignment(
     for action in tactic_trace["actions"]:
         for goal_action in action["goalActions"]:
             explanation = goal_action["explanation"]
-            assert explanation["certificateFingerprint"] == goal_action["proofFingerprint"]
+            assert (
+                explanation["certificateFingerprint"] == goal_action["proofFingerprint"]
+            )
             assert explanation["certificateKind"] == goal_action["proofKind"]
             assert isinstance(explanation["premiseIds"], list)
             assert isinstance(explanation["supportingConstants"], list)
             for result in goal_action["results"]:
                 transition = result["semanticTransition"]
-                assert set(transition["proofPremises"]) == set(explanation["premiseIds"])
+                assert set(transition["proofPremises"]) == set(
+                    explanation["premiseIds"]
+                )
                 assert set(transition["proofConstants"]) == set(
                     explanation["supportingConstants"]
                 )

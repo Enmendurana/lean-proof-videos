@@ -10,11 +10,29 @@ from typing import Any
 
 from proof_video.animation.latex import _latex_matching_token_spans
 from proof_video.animation.semantic import (
+    RendererTransitionSource,
+    authoritative_frame_visual_plan,
+    compile_renderer_transition_plan_from_sources,
     _semantic_transition_plan,
     _tokens_in_semantic_spans,
+    visual_source_goal_ids,
+    visual_primitive_payload,
 )
 from proof_video.models import Movie
-from proof_video.proof.schema import SemanticTransition
+from proof_video.presentation import (
+    GoalCard,
+    GoalForestLayout,
+    build_goal_forest_layout,
+    build_goal_forest_timeline,
+)
+from proof_video.presentation.rows import context_presentation_rows
+from proof_video.proof.adapters import canonical_presentation_expression
+from proof_video.proof.completion import TerminalCompletion
+from proof_video.proof.schema import (
+    SemanticExpression,
+    SemanticTransition,
+    has_native_canonical_observation,
+)
 from proof_video.rendering.pacing import (
     DEFAULT_VISIBLE_GLYPHS_PER_SECOND,
     cinematic_edge_action_count,
@@ -46,6 +64,21 @@ class _NativeRow:
 
 
 @dataclass(frozen=True)
+class _GoalTokenData:
+    card_id: str
+    goal_id: str
+    semantic_expression: Any
+    native_spans: list[tuple[int, int]]
+    native_texts: list[str]
+    native_to_display: dict[int, int]
+    stable_rows: dict[str, tuple[str, tuple[str, ...], tuple[int, ...]]]
+    conclusion_row_indices: tuple[int, ...]
+    conclusion_formula_indices: tuple[int, ...]
+    carried_formula_indices: tuple[int, ...]
+    carried_formula_texts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class _StateTokenData:
     native_spans: list[tuple[int, int]]
     native_texts: list[str]
@@ -56,6 +89,8 @@ class _StateTokenData:
     conclusion_formula_indices: tuple[int, ...]
     carried_formula_indices: tuple[int, ...]
     carried_formula_texts: tuple[str, ...]
+    goal_data: dict[str, _GoalTokenData]
+    active_card_id: str | None
 
 
 @dataclass(frozen=True)
@@ -66,6 +101,10 @@ class _PresentationEntry:
     goal: Any
     transition_goal: Any | None
     tactic: str
+    visual_plan: Any | None = None
+    goals: tuple[Any, ...] = ()
+    transition_goals: tuple[Any | None, ...] = ()
+    goal_layout: GoalForestLayout | None = None
 
 
 @dataclass
@@ -84,6 +123,8 @@ class _PresentationStateBuilder:
         stable_identity: str | None,
         native_row: _NativeRow | None = None,
         native_part_start: int | None = None,
+        native_to_display: dict[int, int] | None = None,
+        goal_metadata: dict[str, Any] | None = None,
     ) -> tuple[int, ...]:
         tokens = _latex_matching_token_spans(latex)
         first_display_token = len(self.display_texts)
@@ -92,9 +133,16 @@ class _PresentationStateBuilder:
             chunk = tokens[first:after]
             chunk_start = chunk[0][1]
             chunk_end = chunk[-1][2]
+            row_key = key if len(chunks) == 1 else f"{key}-wrap-{chunk_index}"
+            metadata = dict(goal_metadata or {})
             self.rows.append(
                 {
-                    "key": key if len(chunks) == 1 else f"{key}-wrap-{chunk_index}",
+                    "id": (
+                        f"{metadata['goalCardId']}/{row_key}"
+                        if metadata.get("goalCardId")
+                        else row_key
+                    ),
+                    "key": row_key,
                     "kind": kind,
                     "latex": latex[chunk_start:chunk_end],
                     "globalStart": self.cursor + chunk_start,
@@ -102,6 +150,7 @@ class _PresentationStateBuilder:
                         [token, start - chunk_start, end - chunk_start]
                         for token, start, end in chunk
                     ],
+                    **metadata,
                 }
             )
         self.display_texts.extend(token for token, _start, _end in tokens)
@@ -112,10 +161,15 @@ class _PresentationStateBuilder:
             if tuple(token for token, _start, _end in native_part) == tuple(
                 token for token, _start, _end in tokens
             ):
+                destination = (
+                    native_to_display
+                    if native_to_display is not None
+                    else self.native_to_display
+                )
                 for offset in range(len(tokens)):
-                    self.native_to_display[
-                        native_row.first_token + native_part_start + offset
-                    ] = first_display_token + offset
+                    destination[native_row.first_token + native_part_start + offset] = (
+                        first_display_token + offset
+                    )
         if stable_identity is not None and tokens:
             self.stable_rows[stable_identity] = (
                 kind,
@@ -169,9 +223,7 @@ def _transition_has_actual_visual_source(
     parent_goal_id = current_goal.parent_goal_id
     transition = current_goal.semantic_transition
     goal_diff = (
-        transition.goal_diff
-        if isinstance(transition, SemanticTransition)
-        else None
+        transition.goal_diff if isinstance(transition, SemanticTransition) else None
     )
     if goal_diff is not None:
         return (
@@ -179,9 +231,8 @@ def _transition_has_actual_visual_source(
             and goal_diff.source_goal_id == previous_goal.goal_id
             and goal_diff.target_goal_id == current_goal.goal_id
         )
-    return (
-        previous_goal is not None
-        and (parent_goal_id is None or parent_goal_id == previous_goal.goal_id)
+    return previous_goal is not None and (
+        parent_goal_id is None or parent_goal_id == previous_goal.goal_id
     )
 
 
@@ -238,9 +289,7 @@ def _token_subsequence_start(
     matches = [
         start
         for start in range(len(whole) - len(part) + 1)
-        if tuple(
-            token for token, _begin, _end in whole[start : start + len(part)]
-        )
+        if tuple(token for token, _begin, _end in whole[start : start + len(part)])
         == part_text
     ]
     return matches[0] if len(matches) == 1 else None
@@ -273,12 +322,8 @@ def _merge_stable_proof_rows(
     source_rows = dict(source_rows)
     target_rows = dict(target_rows)
     if isinstance(semantic_transition, SemanticTransition):
-        source_nodes = {
-            node.node_id: node for node in semantic_transition.source.nodes
-        }
-        target_nodes = {
-            node.node_id: node for node in semantic_transition.target.nodes
-        }
+        source_nodes = {node.node_id: node for node in semantic_transition.source.nodes}
+        target_nodes = {node.node_id: node for node in semantic_transition.target.nodes}
         for edge in semantic_transition.edges:
             source_node = source_nodes.get(edge.source_node_id)
             target_node = target_nodes.get(edge.target_node_id)
@@ -295,7 +340,8 @@ def _merge_stable_proof_rows(
                 or target_node.path[0] != "context"
                 or source_node.path[2] != "name"
                 or target_node.path[2] != "name"
-                or edge.reason not in {
+                or edge.reason
+                not in {
                     "same-identity",
                     "same-proof-context",
                     "verified-stable-declaration",
@@ -376,9 +422,7 @@ def _merge_stable_proof_rows(
     # Stable declarations are a hard board invariant. If a future semantic
     # adapter emits an irreconcilable graph, retain every certified unchanged
     # row and safely write/fade only the rest instead of dropping premises.
-    return solve_transition_plan(
-        source_count, target_count, tuple(stable_candidates)
-    )
+    return solve_transition_plan(source_count, target_count, tuple(stable_candidates))
 
 
 def _visible_token_units(token: str) -> int:
@@ -393,10 +437,12 @@ def _visible_token_units(token: str) -> int:
     return max(1, len(compact))
 
 
-_PROOF_STORAGE_REASONS = frozenset({
-    "verified-live-fact-storage",
-    "verified-proof-definition-storage",
-})
+_PROOF_STORAGE_REASONS = frozenset(
+    {
+        "verified-live-fact-storage",
+        "verified-proof-definition-storage",
+    }
+)
 
 
 def _staged_proof_use_payload(
@@ -424,9 +470,7 @@ def _staged_proof_use_payload(
     """
 
     pair_records = tuple(
-        (candidate, pair)
-        for candidate in plan.selected
-        for pair in candidate.pairs
+        (candidate, pair) for candidate in plan.selected for pair in candidate.pairs
     )
     stored_target_by_source = {
         pair.source: pair.target
@@ -465,12 +509,8 @@ def _staged_proof_use_payload(
         and source_data is not None
         and target_data is not None
     ):
-        source_nodes = {
-            node.node_id: node for node in semantic_transition.source.nodes
-        }
-        target_nodes = {
-            node.node_id: node for node in semantic_transition.target.nodes
-        }
+        source_nodes = {node.node_id: node for node in semantic_transition.source.nodes}
+        target_nodes = {node.node_id: node for node in semantic_transition.target.nodes}
         for edge in semantic_transition.edges:
             if edge.reason != "verified-forall-substitution":
                 continue
@@ -489,11 +529,13 @@ def _staged_proof_use_payload(
                 for index in source_native
                 if index in source_data.native_to_display
             )
-            target_display = tuple(dict.fromkeys(
-                target_data.native_to_display[index]
-                for index in target_native
-                if index in target_data.native_to_display
-            ))
+            target_display = tuple(
+                dict.fromkeys(
+                    target_data.native_to_display[index]
+                    for index in target_native
+                    if index in target_data.native_to_display
+                )
+            )
             if len(source_display) != 1 or not target_display:
                 continue
             via_target = stored_target_by_source.get(source_display[0])
@@ -501,11 +543,13 @@ def _staged_proof_use_payload(
                 continue
             if any(index not in conclusion_targets for index in target_display):
                 continue
-            substitution_ghosts.append({
-                "source": source_display[0],
-                "viaTarget": via_target,
-                "targetIndices": list(target_display),
-            })
+            substitution_ghosts.append(
+                {
+                    "source": source_display[0],
+                    "viaTarget": via_target,
+                    "targetIndices": list(target_display),
+                }
+            )
 
     return {
         # Storage and premise handwriting start on the same frame. Derivation
@@ -516,8 +560,7 @@ def _staged_proof_use_payload(
         "pairPhases": pair_phases,
         "pairViaTargets": pair_via_targets,
         "createdPhases": [
-            2 if target in conclusion_targets else 0
-            for target in plan.created_targets
+            2 if target in conclusion_targets else 0 for target in plan.created_targets
         ],
         "deletedPhases": [0 for _source in plan.deleted_sources],
         "substitutionGhosts": substitution_ghosts,
@@ -559,8 +602,13 @@ def _visual_token_chunks(
     for value in units:
         prefix.append(prefix[-1] + value)
     strong = {
-        r"\implies", r"\Rightarrow", r"\iff", r"\Leftrightarrow",
-        r"\Longleftrightarrow", "\u21d4", "\u2194",
+        r"\implies",
+        r"\Rightarrow",
+        r"\iff",
+        r"\Leftrightarrow",
+        r"\Longleftrightarrow",
+        "\u21d4",
+        "\u2194",
     }
     medium = {",", ";", "=", "<", ">", r"\le", r"\leq", r"\ge", r"\geq"}
     chunks: list[tuple[int, int]] = []
@@ -597,6 +645,255 @@ def _visual_token_chunks(
     return tuple(chunks)
 
 
+def _canonical_frame(frame: Any) -> bool:
+    return bool(
+        getattr(frame, "proof_state", None) is not None
+        and has_native_canonical_observation(frame)
+    )
+
+
+def _goals_for_layout(frame: Any, layout: GoalForestLayout) -> tuple[Any, ...]:
+    available = {
+        goal.goal_id: goal for goal in (*tuple(frame.goals), *tuple(frame.focus_goals))
+    }
+    result = tuple(
+        available[card.goal_id] for card in layout.cards if card.goal_id in available
+    )
+    if _canonical_frame(frame) and len(result) != len(layout.cards):
+        missing = tuple(
+            card.goal_id for card in layout.cards if card.goal_id not in available
+        )
+        raise ValueError(f"canonical goal forest has no renderable goals: {missing!r}")
+    return result or tuple(frame.display_goals)
+
+
+def _goal_forest_payload(layout: GoalForestLayout) -> dict[str, Any]:
+    return {
+        "id": layout.layout_id,
+        "stateFingerprint": layout.state_fingerprint,
+        "rootCardIds": list(layout.root_card_ids),
+        "focusCardIds": list(layout.focus_card_ids),
+        "activeCardId": layout.active_card_id,
+        "introducedCardIds": list(layout.introduced_card_ids),
+        "retiredCardIds": list(layout.retired_card_ids),
+        "closedCardIds": list(layout.closed_card_ids),
+        "cards": [
+            {
+                "id": card.stable_id,
+                "goalId": card.goal_id,
+                "lineageId": card.lineage_id,
+                "parentCardIds": list(card.parent_card_ids),
+                "rootCardIds": list(card.root_card_ids),
+                "depth": card.depth,
+                "order": card.order,
+                "siblingOrder": card.sibling_order,
+                "branchKind": card.branch_kind,
+                "branchIndex": card.branch_index,
+                "focusRank": card.focus_rank,
+                "active": card.is_active,
+                "incomingRelation": card.incoming_relation,
+            }
+            for card in layout.cards
+        ],
+    }
+
+
+def _goal_metadata(card: GoalCard) -> dict[str, Any]:
+    return {
+        "goalCardId": card.stable_id,
+        "goalId": card.goal_id,
+        "goalDepth": card.depth,
+        "goalOrder": card.order,
+        "goalActive": card.is_active,
+        "goalFocused": card.is_focused,
+        "goalRelation": card.incoming_relation,
+    }
+
+
+def _build_goal_card_token_data(
+    builder: _PresentationStateBuilder,
+    card: GoalCard,
+    goal: Any,
+    *,
+    carried_latex: str | None = None,
+) -> _GoalTokenData:
+    """Append one logical goal card and retain its local semantic coordinates."""
+
+    prefix = card.stable_id
+    presentation_rows = context_presentation_rows(goal)
+    native_specs = [
+        (
+            f"hyp-{row.stable_key}",
+            "context",
+            row.latex,
+            f"{prefix}/hypothesis:{row.stable_key}",
+        )
+        for row in presentation_rows
+    ]
+    native_specs.append(
+        (
+            "target",
+            "target",
+            rf"\vdash\;{goal.latex_target or goal.state}",
+            f"{prefix}/target",
+        )
+    )
+
+    native_rows: list[_NativeRow] = []
+    native_spans: list[tuple[int, int]] = []
+    native_texts: list[str] = []
+    native_cursor = 0
+    for key, kind, latex, stable_identity in native_specs:
+        tokens = tuple(_latex_matching_token_spans(latex))
+        first_native_token = len(native_texts)
+        native_rows.append(
+            _NativeRow(
+                row_key=key,
+                kind=kind,
+                latex=latex,
+                stable_identity=stable_identity,
+                tokens=tokens,
+                first_token=first_native_token,
+            )
+        )
+        native_spans.extend(
+            (native_cursor + start, native_cursor + end)
+            for _token, start, end in tokens
+        )
+        native_texts.extend(token for token, _start, _end in tokens)
+        native_cursor += len(latex) + 1
+
+    native_to_display: dict[int, int] = {}
+    metadata = _goal_metadata(card)
+    context_rows = native_rows[:-1]
+    for native_row in context_rows:
+        builder.append_row(
+            native_row.row_key,
+            native_row.kind,
+            native_row.latex,
+            native_row.stable_identity,
+            native_row,
+            0,
+            native_to_display,
+            metadata,
+        )
+
+    carried_formula_indices: tuple[int, ...] = ()
+    if carried_latex is not None:
+        carried_tokens = tuple(_latex_matching_token_spans(carried_latex))
+        for presentation_row, native_row in zip(
+            presentation_rows, context_rows, strict=True
+        ):
+            if presentation_row.body_latex != carried_latex:
+                continue
+            native_part_start = _token_subsequence_start(
+                native_row.tokens, carried_tokens
+            )
+            if native_part_start is None:
+                continue
+            candidate_indices = tuple(
+                native_to_display.get(
+                    native_row.first_token + native_part_start + offset, -1
+                )
+                for offset in range(len(carried_tokens))
+            )
+            if candidate_indices and all(index >= 0 for index in candidate_indices):
+                carried_formula_indices = candidate_indices
+                break
+        if not carried_formula_indices:
+            digest = sha256(carried_latex.encode("utf-8")).hexdigest()[:16]
+            carried_formula_indices = builder.append_row(
+                f"carried-conclusion-{digest}",
+                "context",
+                carried_latex,
+                None,
+                goal_metadata=metadata,
+            )
+
+    target_row = native_rows[-1]
+    conclusion_row_indices = builder.append_row(
+        target_row.row_key,
+        target_row.kind,
+        target_row.latex,
+        target_row.stable_identity,
+        target_row,
+        0,
+        native_to_display,
+        metadata,
+    )
+    target_formula = goal.latex_target or goal.state
+    target_formula_tokens = tuple(_latex_matching_token_spans(target_formula))
+    target_formula_start = _token_subsequence_start(
+        target_row.tokens, target_formula_tokens
+    )
+    conclusion_formula_indices = (
+        tuple(
+            native_to_display[target_row.first_token + target_formula_start + offset]
+            for offset in range(len(target_formula_tokens))
+        )
+        if target_formula_start is not None
+        else ()
+    )
+    local_stable_rows = {
+        identity: value
+        for identity, value in builder.stable_rows.items()
+        if identity.startswith(f"{prefix}/")
+    }
+    return _GoalTokenData(
+        card_id=card.stable_id,
+        goal_id=card.goal_id,
+        semantic_expression=(
+            canonical_presentation_expression(goal)
+            if goal.canonical_target is not None
+            else (
+                goal.semantic_transition.target
+                if isinstance(goal.semantic_transition, SemanticTransition)
+                else SemanticExpression(goal.semantic_nodes)
+            )
+        ),
+        native_spans=native_spans,
+        native_texts=native_texts,
+        native_to_display=native_to_display,
+        stable_rows=local_stable_rows,
+        conclusion_row_indices=conclusion_row_indices,
+        conclusion_formula_indices=conclusion_formula_indices,
+        carried_formula_indices=carried_formula_indices,
+        carried_formula_texts=tuple(
+            token
+            for token, _start, _end in _latex_matching_token_spans(carried_latex or "")
+        ),
+    )
+
+
+def _source_goal_for(current_goal: Any, previous_goals: tuple[Any, ...]) -> Any | None:
+    transition = current_goal.semantic_transition
+    goal_diff = (
+        transition.goal_diff if isinstance(transition, SemanticTransition) else None
+    )
+    source_goal_id = (
+        goal_diff.source_goal_id
+        if goal_diff is not None
+        else current_goal.parent_goal_id
+    )
+    if source_goal_id:
+        match = next(
+            (goal for goal in previous_goals if goal.goal_id == source_goal_id),
+            None,
+        )
+        if match is not None:
+            return match
+    if current_goal.lineage_id:
+        return next(
+            (
+                goal
+                for goal in previous_goals
+                if goal.lineage_id == current_goal.lineage_id
+            ),
+            None,
+        )
+    return None
+
+
 def build_remotion_timeline(
     movie: Movie,
     *,
@@ -621,9 +918,7 @@ def build_remotion_timeline(
     cruise_step_frames = max(
         minimum_visible_action_frames(fps),
         math.ceil(
-            (fps / 3.0)
-            * DEFAULT_VISIBLE_GLYPHS_PER_SECOND
-            / effective_write_speed
+            (fps / 3.0) * DEFAULT_VISIBLE_GLYPHS_PER_SECOND / effective_write_speed
         ),
     )
     initial_frames = max(1, round(1.0 * fps))
@@ -639,10 +934,19 @@ def build_remotion_timeline(
         else 0
     )
     final_hold_frames = celebration_frames + completion_hold_frames
-    all_frames = tuple(frame for frame in movie.semantic_frames() if frame.display_goals)
+    all_frames = tuple(
+        frame for frame in movie.semantic_frames() if frame.display_goals
+    )
+    all_goal_layouts = build_goal_forest_timeline(all_frames)
+    goal_layout_by_frame = {
+        id(frame): layout
+        for frame, layout in zip(all_frames, all_goal_layouts, strict=True)
+    }
     frames = all_frames
     if preview_seconds is not None and preview_tail_seconds is not None:
-        raise ValueError("Choose either an opening preview or a tail preview, not both.")
+        raise ValueError(
+            "Choose either an opening preview or a tail preview, not both."
+        )
     preview_window = preview_seconds or preview_tail_seconds
     if preview_window is not None:
         preview_budget = max(0, int(preview_window * fps) - final_hold_frames)
@@ -653,9 +957,8 @@ def build_remotion_timeline(
             # the frame budget below compresses it proportionally when needed.
             preview_state_count = min(
                 len(all_frames),
-                cinematic_edge_action_count(
-                    fps=fps, cruise_frames=cruise_step_frames
-                ) + 1,
+                cinematic_edge_action_count(fps=fps, cruise_frames=cruise_step_frames)
+                + 1,
             )
         else:
             preview_state_count = 1
@@ -681,200 +984,159 @@ def build_remotion_timeline(
     states: list[dict[str, Any]] = []
     state_token_data: list[_StateTokenData] = []
     entries: list[_PresentationEntry] = []
-    previous_goal: Any | None = None
+    previous_goals: tuple[Any, ...] = ()
     for frame in frames:
-        goal = frame.display_goals[0]
+        layout = goal_layout_by_frame[id(frame)]
+        goals = _goals_for_layout(frame, layout)
+        goals_by_id = {goal.goal_id: goal for goal in goals}
+        active_card = (
+            layout.card(layout.active_card_id) if layout.active_card_id else None
+        )
+        goal = (
+            goals_by_id.get(active_card.goal_id) if active_card is not None else None
+        ) or goals[0]
+        visual_plan = authoritative_frame_visual_plan(frame)
         annotations = tuple(goal.rule_annotations)
         annotation = annotations[0] if len(annotations) == 1 else None
         if (
-            previous_goal is not None
+            visual_plan is None
+            and previous_goals
             and annotation is not None
             and annotation.source_step_id is not None
             and annotation.source_latex
         ):
             if annotation.presentation_goals:
                 for presentation_goal in annotation.presentation_goals:
+                    presentation_frame = replace(
+                        frame,
+                        goals=(presentation_goal,),
+                        focus_goals=(presentation_goal,),
+                        proof_state=None,
+                        goal_lineage=(),
+                    )
+                    presentation_layout = build_goal_forest_layout(presentation_frame)
                     entries.append(
                         _PresentationEntry(
                             frame=frame,
                             goal=presentation_goal,
                             transition_goal=presentation_goal,
                             tactic="forall-premise-selection",
+                            visual_plan=None,
+                            goals=(presentation_goal,),
+                            transition_goals=(presentation_goal,),
+                            goal_layout=presentation_layout,
                         )
                     )
             transition_goal = replace(
                 goal,
                 semantic_transition=(
-                    annotation.substitution_transition
-                    or goal.semantic_transition
+                    annotation.substitution_transition or goal.semantic_transition
                 ),
             )
         else:
             transition_goal = goal
-        if not _transition_has_actual_visual_source(previous_goal, transition_goal):
-            transition_goal = replace(
-                transition_goal,
-                semantic_transition=None,
-                index_maps=None,
-                latex_index_maps=None,
+        prepared_transition_goals: list[Any | None] = []
+        for current_goal in goals:
+            candidate = (
+                transition_goal
+                if current_goal.goal_id == goal.goal_id
+                else current_goal
             )
+            source_goal = _source_goal_for(candidate, previous_goals)
+            certified_source_ids = visual_source_goal_ids(
+                visual_plan, candidate.goal_id
+            )
+            has_canonical_source = bool(
+                visual_plan is not None
+                and certified_source_ids
+                and any(
+                    previous.goal_id in certified_source_ids
+                    for previous in previous_goals
+                )
+            )
+            if not has_canonical_source and not _transition_has_actual_visual_source(
+                source_goal, candidate
+            ):
+                candidate = replace(
+                    candidate,
+                    semantic_transition=None,
+                    index_maps=None,
+                    latex_index_maps=None,
+                )
+            prepared_transition_goals.append(candidate)
+        transition_goal = next(
+            (
+                item
+                for item in prepared_transition_goals
+                if item is not None and item.goal_id == goal.goal_id
+            ),
+            None,
+        )
         entries.append(
             _PresentationEntry(
                 frame=frame,
                 goal=goal,
                 transition_goal=transition_goal,
                 tactic=frame.tactic,
+                visual_plan=visual_plan,
+                goals=goals,
+                transition_goals=tuple(prepared_transition_goals),
+                goal_layout=layout,
             )
         )
-        previous_goal = goal
+        previous_goals = goals
     if on_progress is not None:
         on_progress(0, len(entries))
 
     for state_index, entry in enumerate(entries):
         frame = entry.frame
         goal = entry.goal
-        native_specs = [
-            (
-                f"hyp-{hypothesis.key or hypothesis.name}",
-                "context",
-                hypothesis.render_latex(),
-                (
-                    f"hypothesis:{hypothesis.key}"
-                    if hypothesis.key
-                    else f"context-slot:{context_index}"
-                ),
-            )
-            for context_index, hypothesis in enumerate(goal.latex_context)
-        ]
-        native_specs.append(
-            (
-                "target",
-                "target",
-                rf"\vdash\;{goal.latex_target or goal.state}",
-                f"target:{goal.lineage_id}" if goal.lineage_id else None,
-            )
-        )
-
-        native_rows: list[_NativeRow] = []
-        native_spans: list[tuple[int, int]] = []
-        native_texts: list[str] = []
-        native_cursor = 0
-        for key, kind, latex, stable_identity in native_specs:
-            tokens = tuple(_latex_matching_token_spans(latex))
-            first_native_token = len(native_texts)
-            native_rows.append(
-                _NativeRow(
-                    row_key=key,
-                    kind=kind,
-                    latex=latex,
-                    stable_identity=stable_identity,
-                    tokens=tokens,
-                    first_token=first_native_token,
-                )
-            )
-            native_spans.extend(
-                (native_cursor + start, native_cursor + end)
-                for _token, start, end in tokens
-            )
-            native_texts.extend(token for token, _start, _end in tokens)
-            native_cursor += len(latex) + 1
-
         builder = _PresentationStateBuilder([], [], {}, {})
-
-        # The display state is exactly Lean's current certified context. Do
-        # not pin declarations merely because they occurred in the first
-        # rendered proof-term frame: that frame can already be inside nested
-        # lambdas, so doing so duplicated local variables such as ``x : R``.
-        # Durable rows are preserved below by their proof identity, without
-        # inventing additional context entries.
-        context_rows = native_rows[:-1]
-        carried_latex = (
-            _carried_conclusion_latex(
-                entries[state_index - 1].goal, goal
+        layout = entry.goal_layout
+        if layout is None:
+            raise ValueError("presentation entry has no goal-forest layout")
+        goals_by_id = {item.goal_id: item for item in entry.goals}
+        canonical_visual_plan = entry.visual_plan is not None
+        goal_data: dict[str, _GoalTokenData] = {}
+        for card in layout.cards:
+            current_goal = goals_by_id.get(card.goal_id)
+            if current_goal is None:
+                continue
+            carried_latex = (
+                _carried_conclusion_latex(entries[state_index - 1].goal, current_goal)
+                if state_index > 0
+                and current_goal.goal_id == goal.goal_id
+                and not canonical_visual_plan
+                else None
             )
-            if state_index > 0
-            else None
-        )
-        for native_row in context_rows:
-            builder.append_row(
-                native_row.row_key,
-                native_row.kind,
-                native_row.latex,
-                native_row.stable_identity,
-                native_row,
-                0,
+            goal_data[card.stable_id] = _build_goal_card_token_data(
+                builder,
+                card,
+                current_goal,
+                carried_latex=carried_latex,
             )
 
-        carried_formula_indices: tuple[int, ...] = ()
-        if carried_latex is not None:
-            carried_tokens = tuple(_latex_matching_token_spans(carried_latex))
-            for hypothesis, native_row in zip(
-                goal.latex_context, context_rows, strict=True
-            ):
-                if hypothesis.latex != carried_latex:
-                    continue
-                native_part_start = _token_subsequence_start(
-                    native_row.tokens, carried_tokens
-                )
-                if native_part_start is None:
-                    continue
-                candidate_indices = tuple(
-                    builder.native_to_display.get(
-                        native_row.first_token + native_part_start + offset, -1
-                    )
-                    for offset in range(len(carried_tokens))
-                )
-                if candidate_indices and all(index >= 0 for index in candidate_indices):
-                    carried_formula_indices = candidate_indices
-                    break
-            if not carried_formula_indices:
-                digest = sha256(carried_latex.encode("utf-8")).hexdigest()[:16]
-                carried_formula_indices = builder.append_row(
-                    f"carried-conclusion-{digest}",
-                    "context",
-                    carried_latex,
-                    None,
-                )
-
-        target_row = native_rows[-1]
-        conclusion_row_indices = builder.append_row(
-            target_row.row_key,
-            target_row.kind,
-            target_row.latex,
-            target_row.stable_identity,
-            target_row,
-            0,
+        active_card = layout.card_for_goal(goal.goal_id)
+        if active_card is None and layout.cards:
+            active_card = layout.cards[0]
+        active_data = (
+            goal_data.get(active_card.stable_id) if active_card is not None else None
         )
-        target_formula = goal.latex_target or goal.state
-        target_formula_tokens = tuple(_latex_matching_token_spans(target_formula))
-        target_formula_start = _token_subsequence_start(
-            target_row.tokens, target_formula_tokens
-        )
-        conclusion_formula_indices = (
-            tuple(
-                builder.native_to_display[
-                    target_row.first_token + target_formula_start + offset
-                ]
-                for offset in range(len(target_formula_tokens))
-            )
-            if target_formula_start is not None
-            else ()
-        )
+        if active_data is None:
+            raise ValueError("presentation state has no active renderable goal card")
         state_token_data.append(
             _StateTokenData(
-                native_spans=native_spans,
-                native_texts=native_texts,
-                native_to_display=builder.native_to_display,
+                native_spans=active_data.native_spans,
+                native_texts=active_data.native_texts,
+                native_to_display=active_data.native_to_display,
                 display_texts=builder.display_texts,
                 stable_rows=builder.stable_rows,
-                conclusion_row_indices=conclusion_row_indices,
-                conclusion_formula_indices=conclusion_formula_indices,
-                carried_formula_indices=carried_formula_indices,
-                carried_formula_texts=tuple(
-                    token for token, _start, _end in _latex_matching_token_spans(
-                        carried_latex or ""
-                    )
-                ),
+                conclusion_row_indices=active_data.conclusion_row_indices,
+                conclusion_formula_indices=active_data.conclusion_formula_indices,
+                carried_formula_indices=active_data.carried_formula_indices,
+                carried_formula_texts=active_data.carried_formula_texts,
+                goal_data=goal_data,
+                active_card_id=active_card.stable_id,
             )
         )
         states.append(
@@ -884,6 +1146,7 @@ def build_remotion_timeline(
                 "tactic": entry.tactic,
                 "lineageId": goal.lineage_id,
                 "rows": builder.rows,
+                "goalForest": _goal_forest_payload(layout),
             }
         )
         if on_progress is not None:
@@ -893,25 +1156,165 @@ def build_remotion_timeline(
     for state_index in range(1, len(states)):
         source_data = state_token_data[state_index - 1]
         target_data = state_token_data[state_index]
-        transition_goal = entries[state_index].transition_goal
+        source_entry = entries[state_index - 1]
+        target_entry = entries[state_index]
+        transition_goal = target_entry.transition_goal
         semantic_transition = (
-            transition_goal.semantic_transition
-            if transition_goal is not None
+            transition_goal.semantic_transition if transition_goal is not None else None
+        )
+        visual_plan = target_entry.visual_plan
+        source_layout = source_entry.goal_layout
+        target_layout = target_entry.goal_layout
+        target_transition_goals = {
+            goal.goal_id: goal
+            for goal in target_entry.transition_goals
+            if goal is not None
+        }
+        semantic_candidates: list[TransitionCandidate] = []
+        remapped_local_plans: list[TransitionPlan] = []
+        if source_layout is not None and target_layout is not None:
+            for target_card in target_layout.cards:
+                target_goal_data = target_data.goal_data.get(target_card.stable_id)
+                current_goal = target_transition_goals.get(target_card.goal_id)
+                if target_goal_data is None or current_goal is None:
+                    continue
+                current_transition = current_goal.semantic_transition
+                if current_transition is None:
+                    continue
+                if visual_plan is not None and not isinstance(
+                    current_transition, SemanticTransition
+                ):
+                    # Canonical ABI5 never delegates an opaque/legacy marker
+                    # to the compatibility matcher.
+                    continue
+
+                goal_diff = (
+                    current_transition.goal_diff
+                    if isinstance(current_transition, SemanticTransition)
+                    else None
+                )
+                source_cards: list[GoalCard] = []
+
+                def add_source_card(
+                    candidate: GoalCard | None,
+                    cards: list[GoalCard] = source_cards,
+                ) -> None:
+                    if candidate is not None and candidate.stable_id not in {
+                        item.stable_id for item in cards
+                    }:
+                        cards.append(candidate)
+
+                if visual_plan is not None:
+                    for source_goal_id in visual_source_goal_ids(
+                        visual_plan, target_card.goal_id
+                    ):
+                        add_source_card(source_layout.card_for_goal(source_goal_id))
+                    for parent_id in target_card.parent_card_ids:
+                        add_source_card(source_layout.card(parent_id))
+                else:
+                    add_source_card(
+                        source_layout.card_for_goal(goal_diff.source_goal_id)
+                        if goal_diff is not None
+                        else None
+                    )
+                    if not source_cards and current_goal.parent_goal_id:
+                        add_source_card(
+                            source_layout.card_for_goal(current_goal.parent_goal_id)
+                        )
+                    if (
+                        not source_cards
+                        and target_card.stable_id in source_data.goal_data
+                    ):
+                        add_source_card(source_layout.card(target_card.stable_id))
+                    if not source_cards:
+                        for parent_id in target_card.parent_card_ids:
+                            add_source_card(source_layout.card(parent_id))
+
+                source_goal_data = tuple(
+                    data
+                    for source_card in source_cards
+                    if (data := source_data.goal_data.get(source_card.stable_id))
+                    is not None
+                )
+                if not source_goal_data:
+                    continue
+
+                if visual_plan is not None:
+                    renderer_sources = tuple(
+                        RendererTransitionSource(
+                            goal_id=data.goal_id,
+                            token_spans=tuple(data.native_spans),
+                            token_texts=tuple(data.native_texts),
+                            expression=data.semantic_expression,
+                        )
+                        for data in source_goal_data
+                    )
+                    local_plan = compile_renderer_transition_plan_from_sources(
+                        renderer_sources,
+                        target_goal_data.native_spans,
+                        target_goal_data.native_texts,
+                        current_transition,
+                        visual_plan,
+                        target_goal_id=target_card.goal_id,
+                    )
+                    combined_source_map: dict[int, int] = {}
+                    source_offset = 0
+                    for data in source_goal_data:
+                        combined_source_map.update(
+                            {
+                                source_offset + native: display
+                                for native, display in data.native_to_display.items()
+                            }
+                        )
+                        source_offset += len(data.native_texts)
+                else:
+                    only_source = source_goal_data[0]
+                    local_plan = _semantic_transition_plan(
+                        only_source.native_spans,
+                        only_source.native_texts,
+                        target_goal_data.native_spans,
+                        target_goal_data.native_texts,
+                        current_transition,
+                    )
+                    combined_source_map = only_source.native_to_display
+                local_plan = _remap_semantic_plan(
+                    local_plan,
+                    source_map=combined_source_map,
+                    target_map=target_goal_data.native_to_display,
+                    source_count=len(source_data.display_texts),
+                    target_count=len(target_data.display_texts),
+                )
+                if local_plan is None or not local_plan.valid:
+                    continue
+                remapped_local_plans.append(local_plan)
+                semantic_candidates.extend(
+                    replace(
+                        candidate,
+                        candidate_id=(
+                            f"{'|'.join(card.stable_id for card in source_cards)}"
+                            f"->{target_card.stable_id}:"
+                            f"{candidate.candidate_id}"
+                        ),
+                        source_node_id=(
+                            f"{'|'.join(card.stable_id for card in source_cards)}/"
+                            f"{candidate.source_node_id}"
+                        ),
+                        target_node_id=(
+                            f"{target_card.stable_id}/{candidate.target_node_id}"
+                        ),
+                    )
+                    for candidate in local_plan.selected
+                )
+        plan = (
+            solve_transition_plan(
+                len(source_data.display_texts),
+                len(target_data.display_texts),
+                tuple(semantic_candidates),
+            )
+            if semantic_candidates
+            else remapped_local_plans[0]
+            if len(remapped_local_plans) == 1
             else None
-        )
-        plan = _semantic_transition_plan(
-            source_data.native_spans,
-            source_data.native_texts,
-            target_data.native_spans,
-            target_data.native_texts,
-            semantic_transition,
-        )
-        plan = _remap_semantic_plan(
-            plan,
-            source_map=source_data.native_to_display,
-            target_map=target_data.native_to_display,
-            source_count=len(source_data.display_texts),
-            target_count=len(target_data.display_texts),
         )
         mandatory_candidates: tuple[TransitionCandidate, ...] = ()
         source_conclusion_texts = tuple(
@@ -952,7 +1355,11 @@ def build_remotion_timeline(
             len(target_data.display_texts),
             source_data.stable_rows,
             target_data.stable_rows,
-            semantic_transition,
+            # A canonical visual plan is the sole source of expression
+            # correspondence. Stable whole-row identities remain a layout
+            # optimization, but the legacy transition must not add a second
+            # correspondence graph after the canonical solver has run.
+            None if visual_plan is not None else semantic_transition,
             mandatory_candidates,
         )
         plan_payload = None
@@ -966,19 +1373,34 @@ def build_remotion_timeline(
             )
             plan_payload = {
                 "pairs": [
-                    [pair.source, pair.target, 1 if candidate.role.value == "copy" else 0]
+                    [
+                        pair.source,
+                        pair.target,
+                        1 if candidate.role.value == "copy" else 0,
+                    ]
                     for candidate in plan.selected
                     for pair in candidate.pairs
                 ],
                 "created": list(plan.created_targets),
                 "deleted": list(plan.deleted_sources),
                 "staging": staging,
+                "primitives": visual_primitive_payload(visual_plan),
+                "source": (
+                    "canonical-visual-plan"
+                    if visual_plan is not None
+                    else "legacy-semantic-transition"
+                ),
             }
         transition_plans.append(plan_payload)
 
     transition_count = len(transition_plans)
-    reaches_proof_end = bool(
-        frames and all_frames and frames[-1] is all_frames[-1]
+    reaches_proof_end = bool(frames and all_frames and frames[-1] is all_frames[-1])
+    terminal_completion = (
+        frames[-1].terminal_completion
+        if reaches_proof_end and frames[-1].terminal_completion is not None
+        else TerminalCompletion.unknown(
+            "selected-window-does-not-reach-terminal-frontier"
+        )
     )
     duration_ceiling = preview_window if preview_window is not None else max_duration
     available = (
@@ -1056,14 +1478,10 @@ def build_remotion_timeline(
     ]
     transition_frames = cruise_step_frames
 
-    duration = (
-        initial_frames
-        + sum(durations)
-        + final_hold_frames
-    )
+    duration = initial_frames + sum(durations) + final_hold_frames
     return {
         "schemaVersion": 1,
-        "rendererContract": "strict-proof-transition-v15-overlapped-proof-use",
+        "rendererContract": "strict-proof-transition-v16-goal-forest",
         "theorem": movie.theorem_name,
         "width": width,
         "height": height,
@@ -1075,7 +1493,8 @@ def build_remotion_timeline(
         "pacingProfile": "ten-second-endpoint-plateaus-v14",
         "celebrationFrames": celebration_frames,
         "completionHoldFrames": completion_hold_frames,
-        "showQed": bool(frames and all_frames and frames[-1] is all_frames[-1]),
+        "terminalCompletion": terminal_completion.to_json(),
+        "showQed": terminal_completion.certified_closed,
         "edgeReasons": [],
         "states": states,
         "transitions": transitions,

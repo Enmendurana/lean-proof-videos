@@ -154,42 +154,48 @@ def build_certified_proof_frames(trace: ProofTrace) -> tuple[Frame, ...]:
         ancestor_definition_aliases = _proof_definition_aliases(
             ancestors, steps_by_id, previous_context
         )
+        semantic_transition = _proof_sequent_transition(
+            previous_step,
+            previous_context,
+            step,
+            context_steps,
+            aliases,
+            ancestors,
+            frozenset(
+                steps_by_id[premise].proposition_fingerprint
+                for premise in rendered_premise_ids
+                if premise in steps_by_id
+            ),
+            frozenset(
+                steps_by_id[ancestor].proposition_fingerprint
+                for ancestor in ancestors
+                if ancestor in steps_by_id
+            ),
+            frozenset(
+                {
+                    *rendered_premise_ids,
+                    *rendered_definition_aliases,
+                }
+            ),
+            ancestor_definition_aliases,
+            tuple(
+                (steps_by_id[premise], frozenset(branch))
+                for premise, branch in rendered_premise_branches[step.id]
+                if premise in steps_by_id
+            ),
+            steps_by_id,
+        )
         goal = Goal(
             goal_id=f"proof-step-{step.id}",
             state=step.proposition_lean,
             latex_target=step.proposition_latex,
             latex_context=_render_context(context_steps, aliases),
             lineage_id="proof-sequent",
-            semantic_transition=_proof_sequent_transition(
-                previous_step,
-                previous_context,
-                step,
-                context_steps,
-                aliases,
-                ancestors,
-                frozenset(
-                    steps_by_id[premise].proposition_fingerprint
-                    for premise in rendered_premise_ids
-                    if premise in steps_by_id
-                ),
-                frozenset(
-                    steps_by_id[ancestor].proposition_fingerprint
-                    for ancestor in ancestors
-                    if ancestor in steps_by_id
-                ),
-                frozenset(
-                    {
-                        *rendered_premise_ids,
-                        *rendered_definition_aliases,
-                    }
-                ),
-                ancestor_definition_aliases,
-                tuple(
-                    (steps_by_id[premise], frozenset(branch))
-                    for premise, branch in rendered_premise_branches[step.id]
-                    if premise in steps_by_id
-                ),
-                steps_by_id,
+            semantic_transition=semantic_transition,
+            semantic_nodes=(
+                semantic_transition.target.nodes
+                if semantic_transition is not None
+                else ()
             ),
         )
         frames.append(

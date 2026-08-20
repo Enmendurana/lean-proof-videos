@@ -171,8 +171,9 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("auto", "fine", "scalable"),
         default="auto",
         help=(
-            "auto uses fine proof-term steps for ordinary proofs and scalable "
-            "source-tactic chapters for sources marked resumable"
+            "auto uses canonical ABI 5 source actions; fine selects the "
+            "proof-term compatibility extractor and scalable explicitly "
+            "selects the same resumable ABI 5 chapter format"
         ),
     )
     parser.add_argument(
@@ -273,9 +274,7 @@ def _materialize_module_trace(
         export_unit=export_unit,
         rebuild_chapter=rebuild_chapter,
         identity_root=backend.execution_root,
-        backend_identity=(
-            backend.identity if backend.name != "lean-4.28" else None
-        ),
+        backend_identity=(backend.identity if backend.name != "lean-4.28" else None),
         identity_sources=workspace_mapping,
     )
 

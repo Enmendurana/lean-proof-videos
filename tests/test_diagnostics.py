@@ -61,37 +61,49 @@ def test_semantic_transition_edges_and_unmapped_ids_are_preserved() -> None:
         {
             "theoremName": "Demo.semantic",
             "startGoal": {"goalId": "g1", "state": "old", "latexTarget": "a+b"},
-            "actions": [{
-                "tacticText": "ring",
-                "goalActions": [{
-                    "startGoalId": "g1",
-                    "results": [{
-                        "goal": {"goalId": "g2", "state": "new", "latexTarget": "b+a"},
-                        "latexIndexMaps": {
-                            "s1_to_s2": [0, 1, 2],
-                            "s2_to_s1": [0, 1, 2],
-                        },
-                        "semanticTransition": {
-                            "proofKind": "ring",
-                            "adapter": "expr-tree-v1",
-                            "sourceNodes": [
-                                {"id": "s-add", "kind": "add"},
-                                {"id": "s-unmapped", "kind": "term"},
+            "actions": [
+                {
+                    "tacticText": "ring",
+                    "goalActions": [
+                        {
+                            "startGoalId": "g1",
+                            "results": [
+                                {
+                                    "goal": {
+                                        "goalId": "g2",
+                                        "state": "new",
+                                        "latexTarget": "b+a",
+                                    },
+                                    "latexIndexMaps": {
+                                        "s1_to_s2": [0, 1, 2],
+                                        "s2_to_s1": [0, 1, 2],
+                                    },
+                                    "semanticTransition": {
+                                        "proofKind": "ring",
+                                        "adapter": "expr-tree-v1",
+                                        "sourceNodes": [
+                                            {"id": "s-add", "kind": "add"},
+                                            {"id": "s-unmapped", "kind": "term"},
+                                        ],
+                                        "targetNodes": [
+                                            {"id": "t-add", "kind": "add"},
+                                            {"id": "t-unmapped", "kind": "term"},
+                                        ],
+                                        "edges": [
+                                            {
+                                                "sourceNodeId": "s-add",
+                                                "targetNodeId": "t-add",
+                                                "reason": "same_operator",
+                                                "confidence": 0.98,
+                                            }
+                                        ],
+                                    },
+                                }
                             ],
-                            "targetNodes": [
-                                {"id": "t-add", "kind": "add"},
-                                {"id": "t-unmapped", "kind": "term"},
-                            ],
-                            "edges": [{
-                                "sourceNodeId": "s-add",
-                                "targetNodeId": "t-add",
-                                "reason": "same_operator",
-                                "confidence": 0.98,
-                            }],
-                        },
-                    }],
-                }],
-            }],
+                        }
+                    ],
+                }
+            ],
         }
     )
 
@@ -100,12 +112,14 @@ def test_semantic_transition_edges_and_unmapped_ids_are_preserved() -> None:
     assert block["mappingMode"] == "semantic_transition"
     assert block["proofKind"] == "ring"
     assert block["adapter"] == "expr-tree-v1"
-    assert block["edges"] == [{
-        "sourceNodeId": "s-add",
-        "targetNodeId": "t-add",
-        "reason": "same_operator",
-        "confidence": 0.98,
-    }]
+    assert block["edges"] == [
+        {
+            "sourceNodeId": "s-add",
+            "targetNodeId": "t-add",
+            "reason": "same_operator",
+            "confidence": 0.98,
+        }
+    ]
     assert block["unmappedSourceIds"] == ["s-unmapped"]
     assert block["unmappedTargetIds"] == ["t-unmapped"]
 
@@ -167,9 +181,7 @@ def test_missing_latex_map_is_explicit_legacy_fallback() -> None:
                     "goalActions": [
                         {
                             "startGoalId": "g1",
-                            "results": [
-                                {"goal": {"goalId": "g2", "state": "goal B"}}
-                            ],
+                            "results": [{"goal": {"goalId": "g2", "state": "goal B"}}],
                         }
                     ],
                 }

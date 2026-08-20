@@ -88,9 +88,9 @@ def _ramped_speed(
     if not enabled:
         return maximum_speed
     window = SLOW_TYPING_WINDOW_SECONDS * fps
-    factor = SLOW_TYPING_SPEED_RATIO + (
-        1.0 - SLOW_TYPING_SPEED_RATIO
-    ) * _smoothstep(distance_from_edge / window)
+    factor = SLOW_TYPING_SPEED_RATIO + (1.0 - SLOW_TYPING_SPEED_RATIO) * _smoothstep(
+        distance_from_edge / window
+    )
     return max(1.0, maximum_speed * factor)
 
 
@@ -161,9 +161,7 @@ def proof_typing_pacing(
     slowest_initial = max(
         1,
         math.ceil(
-            initial_units
-            * fps
-            / max(1.0, maximum_speed * SLOW_TYPING_SPEED_RATIO)
+            initial_units * fps / max(1.0, maximum_speed * SLOW_TYPING_SPEED_RATIO)
         ),
     )
     low, high = fastest_initial, slowest_initial
@@ -202,9 +200,7 @@ def proof_typing_pacing(
     speeds: list[float] = []
     movement_frames: list[int] = []
     write_frames: list[int] = []
-    for value, opening_item, closing_item in zip(
-        units, opening, closing, strict=True
-    ):
+    for value, opening_item, closing_item in zip(units, opening, closing, strict=True):
         opening_speed = opening_item[1]
         closing_speed = closing_item[1]
         speed = min(opening_speed, closing_speed)
@@ -276,9 +272,7 @@ def _edge_speed_curve(
             for _ in range(8):
                 midpoint = elapsed + duration / 2.0
                 ramp_elapsed = midpoint - CINEMATIC_ENDPOINT_HOLD_SECONDS
-                rate = endpoint_rate + (
-                    cruise_rate - endpoint_rate
-                ) * _smootherstep(
+                rate = endpoint_rate + (cruise_rate - endpoint_rate) * _smootherstep(
                     ramp_elapsed / CINEMATIC_EDGE_WINDOW_SECONDS
                 )
                 duration = 1.0 / rate
@@ -296,10 +290,7 @@ def cinematic_edge_action_count(*, fps: int, cruise_frames: int) -> int:
             max(
                 64,
                 math.ceil(
-                    (
-                        CINEMATIC_ENDPOINT_HOLD_SECONDS
-                        + CINEMATIC_EDGE_WINDOW_SECONDS
-                    )
+                    (CINEMATIC_ENDPOINT_HOLD_SECONDS + CINEMATIC_EDGE_WINDOW_SECONDS)
                     * fps
                 ),
             ),
@@ -333,14 +324,12 @@ def _quantize_monotone_edge(
             if candidate < 2:
                 continue
             if increasing:
-                monotone = (
-                    (index == 0 or result[index - 1] <= candidate)
-                    and (index == len(result) - 1 or candidate <= result[index + 1])
+                monotone = (index == 0 or result[index - 1] <= candidate) and (
+                    index == len(result) - 1 or candidate <= result[index + 1]
                 )
             else:
-                monotone = (
-                    (index == 0 or result[index - 1] >= candidate)
-                    and (index == len(result) - 1 or candidate >= result[index + 1])
+                monotone = (index == 0 or result[index - 1] >= candidate) and (
+                    index == len(result) - 1 or candidate >= result[index + 1]
                 )
             if not monotone:
                 continue

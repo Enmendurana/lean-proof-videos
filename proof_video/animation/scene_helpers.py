@@ -10,6 +10,7 @@ from manim import (
     Mobject,
     RIGHT,
     Succession,
+    TexTemplate,
     Transform,
     TransformFromCopy,
     VGroup,
@@ -18,6 +19,8 @@ from manim import (
 
 from proof_video.latex import lean_to_latex, parse_goal_state
 from proof_video.models import Goal, IndexMaps, SemanticTransition
+from proof_video.presentation.rows import context_presentation_rows
+from proof_video.presentation.model import SemanticVisualPlan
 from proof_video.animation.latex import (
     _latex_matching_token_spans,
     _normalize_unicode_math,
@@ -26,14 +29,19 @@ from proof_video.animation.latex import (
     _unwrap_leantex_fallback,
 )
 from proof_video.animation.semantic import (
+    RendererTransitionSource,
     _collect_row_token_data,
     _row_base_key,
     _semantic_token_pairs,
+    compile_renderer_transition_plan_from_sources,
 )
 
 
 NEW_TOKEN_SLIDE_DISTANCE = 0.24
 NEW_TOKEN_START_SCALE = 1.65
+
+_PROOF_TEX_TEMPLATE = TexTemplate()
+_PROOF_TEX_TEMPLATE.add_to_preamble(r"\usepackage{mathtools}")
 
 
 def _glyph_reveal(mobject):
@@ -84,7 +92,28 @@ def _shares_proof_block(source, target) -> bool:
 
 
 def _continues_visual_block(source, target) -> bool:
-    """Keep exact or semantically similar focused goals in one board block."""
+    """Keep a goal forest at one anchor across a certified evolution."""
+
+    source_keys = {
+        getattr(block, "proof_block_key", None)
+        for block in source
+        if getattr(block, "proof_block_key", None) is not None
+    }
+    target_parents = {
+        parent
+        for block in target
+        for parent in getattr(block, "proof_parent_block_keys", ())
+    }
+    canonical = bool(
+        getattr(source, "proof_canonical_state", False)
+        or getattr(target, "proof_canonical_state", False)
+        or any(
+            getattr(block, "proof_canonical_state", False)
+            for block in (*tuple(source), *tuple(target))
+        )
+    )
+    if canonical:
+        return _shares_proof_block(source, target) or bool(source_keys & target_parents)
     return _shares_proof_block(source, target) or bool(
         _similar_block_pairs(list(source), list(target))
     )
@@ -118,9 +147,19 @@ def _mapped_row_animations(
     target,
     index_maps: IndexMaps | None,
     semantic_transition: SemanticTransition | None = None,
+    visual_plan: SemanticVisualPlan | None = None,
+    *,
+    source_goal_id: str = "",
+    target_goal_id: str = "",
 ):
     return _mapped_rows_animations(
-        [source], [target], index_maps, semantic_transition
+        [source],
+        [target],
+        index_maps,
+        semantic_transition,
+        visual_plan,
+        source_goal_id=source_goal_id,
+        target_goal_id=target_goal_id,
     )
 
 
@@ -165,7 +204,11 @@ def _mapped_rows_animations(
     target_rows,
     index_maps: IndexMaps | None,
     semantic_transition: SemanticTransition | None = None,
+    visual_plan: SemanticVisualPlan | None = None,
     protected_source_bases: set[str] | None = None,
+    *,
+    source_goal_id: str = "",
+    target_goal_id: str = "",
 ):
     """Reproduce upstream's persistent-character transition inside one block.
 
@@ -209,21 +252,26 @@ def _mapped_rows_animations(
         target_global,
         target_token_texts,
         semantic_transition,
+        visual_plan,
+        source_goal_id=source_goal_id,
+        target_goal_id=target_goal_id,
     )
-    if semantic_transition is not None:
+    if semantic_transition is not None or visual_plan is not None:
         # Strict ProofTrace transitions do not fall back to flattened
         # character maps, same-position punctuation or SymPy.  Anything not
         # selected by the validated Lean plan is created/deleted explicitly.
         assert semantic_pairs is not None
-        return [_phased_token_transition(
-            source_tokens,
-            target_tokens,
-            semantic_pairs,
-            source_structural,
-            target_structural,
-            protected_source_indices=protected_source_indices,
-            copy_source_indices=protected_source_indices,
-        )]
+        return [
+            _phased_token_transition(
+                source_tokens,
+                target_tokens,
+                semantic_pairs,
+                source_structural,
+                target_structural,
+                protected_source_indices=protected_source_indices,
+                copy_source_indices=protected_source_indices,
+            )
+        ]
     if index_maps is None:
         return None
 
@@ -268,6 +316,83 @@ def _mapped_rows_animations(
     return [_phased_token_transition(source_tokens, target_tokens, pairs)]
 
 
+def _mapped_source_groups_animations(
+    source_groups,
+    target_rows,
+    semantic_transition: SemanticTransition | None,
+    visual_plan: SemanticVisualPlan,
+    *,
+    target_goal_id: str,
+    protected_source_bases: dict[str, set[str]] | None = None,
+):
+    """Animate one canonical target from all of its certified source cards.
+
+    ``source_groups`` contains ``(goal_id, rows, semantic_expression)`` tuples.
+    Their token spaces stay local while correspondence is compiled, then are
+    concatenated only for the final physical animation.
+    """
+
+    target_data = _collect_row_token_data(target_rows)
+    if target_data is None:
+        return None
+    target_global, target_structural, target_texts, target_tokens = target_data
+    renderer_sources: list[RendererTransitionSource] = []
+    source_tokens = []
+    source_structural = []
+    protected_indices: set[int] = set()
+    source_offset = 0
+    protected_source_bases = protected_source_bases or {}
+    for goal_id, rows, expression in source_groups:
+        source_data = _collect_row_token_data(rows)
+        if source_data is None:
+            return None
+        source_global, positions, source_texts, tokens = source_data
+        renderer_sources.append(
+            RendererTransitionSource(
+                goal_id=goal_id,
+                token_spans=tuple(source_global),
+                token_texts=tuple(source_texts),
+                expression=expression,
+            )
+        )
+        protected_bases = protected_source_bases.get(goal_id, set())
+        protected_indices.update(
+            source_offset + index
+            for index, position in enumerate(positions)
+            if position[0] in protected_bases
+        )
+        source_tokens.extend(tokens)
+        # Row keys are local to a card (every target row is named ``target``).
+        # Scope them before grouping contiguous runs so two adjacent source
+        # cards can never be collapsed into one synthetic moving phrase.
+        source_structural.extend(
+            (f"{goal_id}/{row_key}", start, end) for row_key, start, end in positions
+        )
+        source_offset += len(source_texts)
+
+    plan = compile_renderer_transition_plan_from_sources(
+        tuple(renderer_sources),
+        target_global,
+        target_texts,
+        semantic_transition,
+        visual_plan,
+        target_goal_id=target_goal_id,
+    )
+    if plan is None or not plan.valid:
+        return None
+    return [
+        _phased_token_transition(
+            source_tokens,
+            target_tokens,
+            list(plan.pairs),
+            source_structural,
+            target_structural,
+            protected_source_indices=protected_indices,
+            copy_source_indices=protected_indices,
+        )
+    ]
+
+
 def _partial_semantic_rows_animation(source_rows, target_rows):
     """Preserve stable rows when one row lacks render-token metadata.
 
@@ -305,18 +430,6 @@ def _partial_semantic_rows_animation(source_rows, target_rows):
     return AnimationGroup(*animations) if animations else AnimationGroup()
 
 
-def _unmapped_semantic_rows_animation(source_rows, target_rows):
-    """Safe no-guess fallback when semantic spans cannot reach SVG tokens."""
-    phases = []
-    if source_rows:
-        phases.append(AnimationGroup(*(FadeOut(row) for row in source_rows)))
-    if target_rows:
-        phases.append(AnimationGroup(*(FadeIn(row) for row in target_rows)))
-    if not phases:
-        return AnimationGroup()
-    return Succession(*phases, lag_ratio=1)
-
-
 def _contiguous_pair_runs(
     stationary_pairs,
     source_positions,
@@ -340,9 +453,8 @@ def _contiguous_pair_runs(
         same_target_row = (
             target_positions[previous_target][0] == target_positions[target_index][0]
         )
-        same_copy_mode = (
-            (previous_source in copy_source_indices)
-            == (source_index in copy_source_indices)
+        same_copy_mode = (previous_source in copy_source_indices) == (
+            source_index in copy_source_indices
         )
         if (
             source_index == previous_source + 1
@@ -369,8 +481,12 @@ def _phased_token_transition(
     """Transform a changed row in parallel, with a soft oversized entrance."""
     protected_source_indices = protected_source_indices or set()
     copy_source_indices = copy_source_indices or set()
-    stationary_source = {source_index for source_index, _target_index in stationary_pairs}
-    stationary_target = {target_index for _source_index, target_index in stationary_pairs}
+    stationary_source = {
+        source_index for source_index, _target_index in stationary_pairs
+    }
+    stationary_target = {
+        target_index for _source_index, target_index in stationary_pairs
+    }
     removed = [
         token
         for index, token in enumerate(source_tokens)
@@ -395,9 +511,7 @@ def _phased_token_transition(
         or not (
             _has_bounds(source_tokens[pair[0]])
             and _has_bounds(target_tokens[pair[1]])
-            and _tokens_share_geometry(
-                source_tokens[pair[0]], target_tokens[pair[1]]
-            )
+            and _tokens_share_geometry(source_tokens[pair[0]], target_tokens[pair[1]])
         )
     ]
     if moving_pairs:
@@ -499,6 +613,7 @@ def _tokens_share_geometry(source, target, tolerance: float = 0.025) -> bool:
             return False
     return True
 
+
 def _goal_latex(goal: Goal) -> str:
     if goal.latex_target:
         return goal.latex_target
@@ -506,8 +621,9 @@ def _goal_latex(goal: Goal) -> str:
 
 
 def _initial_context_lines(goal: Goal) -> list[str]:
-    if goal.latex_context:
-        return [hypothesis.render_latex() for hypothesis in goal.latex_context]
+    presentation_rows = context_presentation_rows(goal)
+    if presentation_rows or goal.canonical_target is not None:
+        return [row.latex for row in presentation_rows]
 
     result = []
     for names, expression in parse_goal_state(goal.state).context:
@@ -517,6 +633,7 @@ def _initial_context_lines(goal: Goal) -> list[str]:
 
 
 def _safe_mathtex(source: str, **kwargs) -> MathTex:
+    kwargs.setdefault("tex_template", _PROOF_TEX_TEMPLATE)
     source = _unwrap_leantex_fallback(source)
     source = _normalize_unicode_math(source)
     source = _sanitize_leantex(source)
@@ -535,17 +652,10 @@ def _safe_mathtex(source: str, **kwargs) -> MathTex:
         }
         for special, replacement in replacements.items():
             plain = plain.replace(special, replacement)
-        plain = "".join(character if 32 <= ord(character) < 127 else "?" for character in plain)
-        return MathTex(rf"\text{{{plain}}}", **kwargs)
-
-
-def _wrapped_math_rows(source: str, color: str, maximum_width: float = 10.5) -> list[MathTex]:
-    return [
-        row
-        for row, _start, _end in _wrapped_math_rows_with_spans(
-            source, color, maximum_width
+        plain = "".join(
+            character if 32 <= ord(character) < 127 else "?" for character in plain
         )
-    ]
+        return MathTex(rf"\text{{{plain}}}", **kwargs)
 
 
 def _wrapped_math_rows_with_spans(
@@ -574,6 +684,7 @@ def _wrapped_math_rows_with_spans(
 
 def _matching_mathtex(source: str, **kwargs) -> MathTex:
     """Create stable semantic token parts for TransformMatchingTex."""
+    kwargs.setdefault("tex_template", _PROOF_TEX_TEMPLATE)
     normalized = _sanitize_leantex(
         _normalize_unicode_math(_unwrap_leantex_fallback(source))
     )
@@ -606,5 +717,6 @@ def _prune_empty_submobjects(mobject) -> None:
     mobject.submobjects = [
         submobject
         for submobject in mobject.submobjects
-        if submobject.has_points() or any(member.has_points() for member in submobject.get_family())
+        if submobject.has_points()
+        or any(member.has_points() for member in submobject.get_family())
     ]

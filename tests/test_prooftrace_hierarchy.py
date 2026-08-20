@@ -60,7 +60,8 @@ def test_each_local_proof_is_emitted_once_and_linked(hierarchy_trace: dict) -> N
     }
     for theorem_name in final_by_name:
         uses = [
-            step for step in steps
+            step
+            for step in steps
             if step.get("theoremName") == theorem_name
             and step["id"] != final_by_name[theorem_name]
         ]

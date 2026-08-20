@@ -105,6 +105,7 @@ def _goal_latex_state(goal: dict[str, Any]) -> str:
 
 def _normalize_goal(goal: dict[str, Any]) -> dict[str, Any]:
     result = deepcopy(goal)
+    raw_state = _goal_latex_state(goal)
     # Absence of a LaTeX field is meaningful for legacy traces: ``Goal`` then
     # falls back to its Lean state.  Do not turn a missing field into an empty
     # string, otherwise two different legacy goals collapse into one visual
@@ -117,11 +118,39 @@ def _normalize_goal(goal: dict[str, Any]) -> dict[str, Any]:
             latex, _mapping = normalize_fallback_latex(str(hypothesis["latex"]))
             hypothesis["latex"] = latex
         if hypothesis.get("rawLatex") is not None:
-            raw_latex, _mapping = normalize_fallback_latex(
-                str(hypothesis["rawLatex"])
-            )
+            raw_latex, _mapping = normalize_fallback_latex(str(hypothesis["rawLatex"]))
             hypothesis["rawLatex"] = raw_latex
+
+    # ABI 5 keeps the renderer-independent expression tree next to the
+    # human-readable view.  A LeanTeX fallback may occur in either copy (for
+    # example while a local definition's type still contains metavariables),
+    # so normalize both and remap the expression-local occurrence spans.
+    # This changes presentation only; expression fingerprints and Lean-owned
+    # identities remain untouched.
+    _normalize_expression(result.get("canonicalTarget"))
+    for declaration in result.get("canonicalLocals", ()):
+        if not isinstance(declaration, dict):
+            continue
+        _normalize_expression(declaration.get("type"))
+        _normalize_expression(declaration.get("value"))
+
+    # ``semanticNodes`` use offsets in the complete rendered sequent rather
+    # than in one canonical expression.  Remap them with the complete state
+    # boundary map so legacy consumers and diagnostics see the same coordinate
+    # system as the normalized text.
+    _normalized_state, state_mapping = normalize_fallback_latex(raw_state)
+    _remap_nodes(result.get("semanticNodes", []), state_mapping)
     return result
+
+
+def _normalize_expression(expression: Any) -> None:
+    """Normalize one canonical expression without changing proof evidence."""
+
+    if not isinstance(expression, dict) or expression.get("latex") is None:
+        return
+    normalized, mapping = normalize_fallback_latex(str(expression["latex"]))
+    expression["latex"] = normalized
+    _remap_nodes(expression.get("occurrences", []), mapping)
 
 
 def _remap_nodes(nodes: list[dict[str, Any]], mapping: LatexBoundaryMap) -> None:
@@ -212,6 +241,15 @@ def normalize_source_tactic_movie(value: dict[str, Any]) -> dict[str, Any]:
     for raw_action, normalized_action in zip(
         value.get("actions", ()), result.get("actions", ()), strict=True
     ):
+        # ABI 5 exports the observed live frontier directly.  It is the
+        # authoritative renderer input and is intentionally not reconstructed
+        # from ``goalActions``; normalize it explicitly just like the older
+        # nested result goals.
+        for state_key in ("beforeState", "afterState"):
+            if state_key in raw_action:
+                normalized_action[state_key] = [
+                    _normalize_goal(goal) for goal in raw_action.get(state_key, ())
+                ]
         for raw_goal_action, normalized_goal_action in zip(
             raw_action.get("goalActions", ()),
             normalized_action.get("goalActions", ()),

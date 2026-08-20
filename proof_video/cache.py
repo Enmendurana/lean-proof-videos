@@ -296,7 +296,11 @@ def lean_evidence_identity(
             if proof_trace_contract is not None
             else {}
         ),
-        **({"toolchainBackend": backend_identity} if backend_identity is not None else {}),
+        **(
+            {"toolchainBackend": backend_identity}
+            if backend_identity is not None
+            else {}
+        ),
     }
 
 
@@ -324,7 +328,11 @@ def legacy_lean_evidence_identity(
         "traceMode": trace_mode,
         "sourceDigest": source_digest,
         "toolchainDigest": toolchain_digest,
-        **({"toolchainBackend": backend_identity} if backend_identity is not None else {}),
+        **(
+            {"toolchainBackend": backend_identity}
+            if backend_identity is not None
+            else {}
+        ),
     }
 
 

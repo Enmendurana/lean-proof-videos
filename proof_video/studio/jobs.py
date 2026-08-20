@@ -163,9 +163,7 @@ class JobRunner:
         )
         log_path = job_root / "worker.log"
         log_handle = log_path.open("ab")
-        creationflags = (
-            subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
-        )
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         self._process = await asyncio.create_subprocess_exec(
             *self.worker_command(request_path),
             cwd=self.project_root,
@@ -252,7 +250,9 @@ class JobRunner:
             except (OSError, json.JSONDecodeError):
                 payload = {}
         current = self.store.job(job_id)
-        status = str(payload.get("status") or ("succeeded" if return_code == 0 else "failed"))
+        status = str(
+            payload.get("status") or ("succeeded" if return_code == 0 else "failed")
+        )
         if current["status"] == "cancelling":
             status = "cancelled"
         self.store.update_job(

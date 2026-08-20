@@ -41,9 +41,7 @@ def validate_trace(trace: "ProofTrace") -> ValidationReport:
     if actual_ids != expected_ids:
         errors.append("step ids must be contiguous and ordered from zero")
 
-    chapter_by_step = {
-        step.id: trace.chapter_for_step(step.id) for step in trace.steps
-    }
+    chapter_by_step = {step.id: trace.chapter_for_step(step.id) for step in trace.steps}
     if trace.chapters:
         expected_start = 0
         for index, chapter in enumerate(trace.chapters):
@@ -116,8 +114,7 @@ def validate_trace(trace: "ProofTrace") -> ValidationReport:
                 errors.append(f"step {step.id} cites non-earlier premise {premise_id}")
             ordinarily_visible = is_ancestor(premise.scope_id, step.scope_id)
             discharged_here = bool(
-                step.closes_scope
-                and is_ancestor(step.closes_scope, premise.scope_id)
+                step.closes_scope and is_ancestor(step.closes_scope, premise.scope_id)
             )
             premise_chapter = chapter_by_step.get(premise.id)
             consumer_chapter = chapter_by_step.get(step.id)
@@ -128,7 +125,11 @@ def validate_trace(trace: "ProofTrace") -> ValidationReport:
                 and premise_chapter.id < consumer_chapter.id
                 and premise_chapter.theorem_name in consumer_chapter.dependencies
             )
-            if not ordinarily_visible and not discharged_here and not proved_local_theorem:
+            if (
+                not ordinarily_visible
+                and not discharged_here
+                and not proved_local_theorem
+            ):
                 errors.append(
                     f"step {step.id} cites out-of-scope premise {premise_id} "
                     f"from {premise.scope_id!r}"

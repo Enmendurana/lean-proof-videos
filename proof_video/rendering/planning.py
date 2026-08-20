@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Any
 
 from proof_video.cache import file_digest, stable_hash
+from proof_video.presentation.rows import context_presentation_rows
 from proof_video.proof.schema import Frame, Goal, IndexMaps
 from proof_video.rendering.pacing import maximum_visible_write_speed
 
 _MODULE_ROOT = Path(__file__).parents[1]
+
 
 def _segment_key(
     frames: tuple[Frame, ...],
@@ -24,7 +26,6 @@ def _segment_key(
 ) -> str:
     scene_path = _MODULE_ROOT / "scene.py"
     model_path = _MODULE_ROOT / "models.py"
-    sympy_path = _MODULE_ROOT / "sympy_matching.py"
     window = frames[max(0, index - 3) : index + 1]
     return stable_hash(
         "proof-segment-v3",
@@ -35,8 +36,9 @@ def _segment_key(
             "transitionSeconds": transition_seconds,
         },
         {"width": width, "height": height, "fps": fps, "renderer": renderer},
-        file_digest([scene_path, model_path, sympy_path]),
+        file_digest([scene_path, model_path]),
     )
+
 
 def _chunk_key(
     frames: tuple[Frame, ...],
@@ -50,7 +52,6 @@ def _chunk_key(
 ) -> str:
     scene_path = _MODULE_ROOT / "scene.py"
     model_path = _MODULE_ROOT / "models.py"
-    sympy_path = _MODULE_ROOT / "sympy_matching.py"
     # Earlier context is part of the first settled board at a chunk boundary.
     window = frames[max(0, start - 3) : end]
     return stable_hash(
@@ -62,8 +63,9 @@ def _chunk_key(
             "transitionSeconds": transition_seconds,
         },
         {"width": width, "height": height, "fps": fps, "renderer": "cairo"},
-        file_digest([scene_path, model_path, sympy_path]),
+        file_digest([scene_path, model_path]),
     )
+
 
 def _full_key(
     frames: tuple[Frame, ...],
@@ -77,7 +79,6 @@ def _full_key(
     scene_path = _MODULE_ROOT / "scene.py"
     model_path = _MODULE_ROOT / "models.py"
     latex_path = _MODULE_ROOT / "latex.py"
-    sympy_path = _MODULE_ROOT / "sympy_matching.py"
     render_path = _MODULE_ROOT / "render.py"
     return stable_hash(
         "proof-full-v1",
@@ -87,14 +88,21 @@ def _full_key(
             "transitionSeconds": transition_seconds,
         },
         {"width": width, "height": height, "fps": fps, "renderer": renderer},
-        file_digest([scene_path, model_path, latex_path, sympy_path, render_path]),
+        file_digest([scene_path, model_path, latex_path, render_path]),
     )
+
 
 def _frame_payload(frame: Frame) -> dict[str, Any]:
     return {
         "tactic": frame.tactic,
         "goals": [_goal_payload(goal) for goal in frame.display_goals],
+        "terminalCompletion": (
+            frame.terminal_completion.to_json()
+            if frame.terminal_completion is not None
+            else None
+        ),
     }
+
 
 def effective_write_speed(
     frames: tuple[Frame, ...],
@@ -129,6 +137,7 @@ def effective_write_speed(
         )
     return max(requested, required)
 
+
 def estimate_new_glyphs(frames: tuple[Frame, ...]) -> int:
     """Conservatively count text introduced as entirely new semantic rows."""
     previous_keys: set[tuple[str, str]] = set()
@@ -141,15 +150,18 @@ def estimate_new_glyphs(frames: tuple[Frame, ...]) -> int:
         previous_keys = set(rows)
     return max(1, total)
 
+
 def _semantic_rows(frame: Frame) -> dict[tuple[str, str], str]:
     rows: dict[tuple[str, str], str] = {}
     for goal_index, goal in enumerate(frame.display_goals[:3]):
         lineage = goal.lineage_id or f"goal-{goal_index}"
-        for hypothesis in goal.latex_context:
-            semantic_key = hypothesis.key or hypothesis.name
-            rows[(lineage, f"hyp-{semantic_key}")] = hypothesis.render_latex()
+        for presentation_row in context_presentation_rows(goal):
+            rows[(lineage, f"hyp-{presentation_row.stable_key}")] = (
+                presentation_row.latex
+            )
         rows[(lineage, "target")] = goal.latex_target or goal.state
     return rows
+
 
 def _estimated_visible_characters(source: str) -> int:
     # LaTeX commands usually produce one visible symbol; braces and spacing
@@ -159,14 +171,25 @@ def _estimated_visible_characters(source: str) -> int:
     without_commands = re.sub(r"\\[A-Za-z]+|[{}\\\s]", "", source)
     return max(1, commands + len(without_commands))
 
+
+def _goal_latex_state(goal: Goal) -> str:
+    return "\n".join(
+        [
+            *(row.latex for row in context_presentation_rows(goal)),
+            rf"\vdash\;{goal.latex_target or goal.state}",
+        ]
+    )
+
+
 def _goal_payload(goal: Goal) -> dict[str, Any]:
     return {
         "lineage": goal.lineage_id,
         "parent": goal.parent_goal_id,
-        "latex": goal.latex_state(),
+        "latex": _goal_latex_state(goal),
         "latexMaps": _map_payload(goal.latex_index_maps),
         "semanticTransition": _semantic_transition_payload(goal.semantic_transition),
     }
+
 
 def _semantic_transition_payload(transition):
     if transition is None:
@@ -210,6 +233,7 @@ def _semantic_transition_payload(transition):
         "fallbackReason": transition.fallback_reason,
     }
 
+
 def _map_payload(index_maps: IndexMaps | None):
     if index_maps is None:
         return None
@@ -218,8 +242,10 @@ def _map_payload(index_maps: IndexMaps | None):
         "targetToSource": index_maps.target_to_source,
     }
 
+
 def _preview_indices(frame_count: int) -> tuple[int, ...]:
     return tuple(sorted({0, frame_count // 2, frame_count - 1}))
+
 
 def _resolve_renderer(requested: str) -> str:
     if requested != "auto":
@@ -233,9 +259,11 @@ def _resolve_renderer(requested: str) -> str:
     except Exception:
         return "cairo"
 
+
 def _opengl_safe_for_frame(frame: Frame) -> bool:
     """Avoid known driver stalls on unusually dense simultaneous goals."""
-    return sum(len(goal.latex_state()) for goal in frame.display_goals) <= 360
+    return sum(len(_goal_latex_state(goal)) for goal in frame.display_goals) <= 360
+
 
 def _opengl_safe_for_movie(frames: tuple[Frame, ...]) -> bool:
     return all(_opengl_safe_for_frame(frame) for frame in frames)

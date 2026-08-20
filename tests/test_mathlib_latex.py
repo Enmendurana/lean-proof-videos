@@ -27,4 +27,6 @@ def test_central_mathlib_latex_dictionary() -> None:
         timeout=180,
         check=False,
     )
-    assert completed.returncode == 0, (completed.stdout or "") + (completed.stderr or "")
+    assert completed.returncode == 0, (completed.stdout or "") + (
+        completed.stderr or ""
+    )

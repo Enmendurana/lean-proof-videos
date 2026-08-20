@@ -273,4 +273,6 @@ class JsonLinesProgressSink:
 
 def cli_entrypoint(argv: list[str] | None = None) -> int:
     """Installed CLI entrypoint using the same service boundary as the studio."""
-    return RenderService().run_arguments(list(argv if argv is not None else sys.argv[1:]))
+    return RenderService().run_arguments(
+        list(argv if argv is not None else sys.argv[1:])
+    )

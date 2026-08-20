@@ -43,7 +43,9 @@ def _launch_url(root: Path, base_url: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Local Lean Proof Studio")
-    parser.add_argument("command", nargs="?", choices=("start", "status"), default="start")
+    parser.add_argument(
+        "command", nargs="?", choices=("start", "status"), default="start"
+    )
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)

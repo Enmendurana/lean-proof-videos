@@ -40,7 +40,9 @@ def export_trace(
     snapshot_certificate: Path | None = None
     if trace_backend == "snapshot":
         if toolchain_backend is None:
-            raise ValueError("snapshot trace backend needs an explicit toolchain backend")
+            raise ValueError(
+                "snapshot trace backend needs an explicit toolchain backend"
+            )
         from proof_video.snapshot_runtime import refresh_incremental_snapshots
 
         # Build the reader and all imported support modules once, but execute
@@ -75,10 +77,14 @@ def export_trace(
         command.append(str(snapshot_path.resolve()))
         assert snapshot_certificate is not None
         command.append(str(snapshot_certificate.resolve()))
-    command.extend([
-        "--trace-mode", trace_mode,
-        "--postprocess-workers", str(postprocess_workers),
-    ])
+    command.extend(
+        [
+            "--trace-mode",
+            trace_mode,
+            "--postprocess-workers",
+            str(postprocess_workers),
+        ]
+    )
     if checkpoint_dir is not None and trace_mode in {"hybrid", "proof-term"}:
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
         command.extend(("--trace-checkpoint-dir", str(checkpoint_dir.resolve())))
@@ -136,7 +142,10 @@ def export_trace(
         f"Lean trace: starting verified Animate extractor ({trace_backend})...",
         flush=True,
     )
-    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+    with (
+        tempfile.TemporaryFile() as stdout_file,
+        tempfile.TemporaryFile() as stderr_file,
+    ):
         try:
             process = subprocess.Popen(
                 command,
@@ -234,20 +243,20 @@ def export_trace(
                             else None
                         )
                         progress_line = (
-                                _format_trace_finalizing(progress, elapsed)
-                                if finalizing
-                                else _format_trace_progress(
-                                    progress,
-                                    fraction,
-                                    elapsed,
-                                    eta,
-                                    lean_source=lean_source,
-                                    command_elapsed=(
-                                        time.monotonic() - active_command_started
-                                        if active_command_started is not None
-                                        else None
-                                    ),
-                                )
+                            _format_trace_finalizing(progress, elapsed)
+                            if finalizing
+                            else _format_trace_progress(
+                                progress,
+                                fraction,
+                                elapsed,
+                                eta,
+                                lean_source=lean_source,
+                                command_elapsed=(
+                                    time.monotonic() - active_command_started
+                                    if active_command_started is not None
+                                    else None
+                                ),
+                            )
                         )
                         if toolchain_backend is not None:
                             progress_line = (
@@ -345,7 +354,9 @@ def _request_snapshot_trace_with_progress(
     except OSError:
         source = b""
     print("Lean trace: requesting the in-memory 4.32 snapshot tree...", flush=True)
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="lean-snapshot-client") as pool:
+    with ThreadPoolExecutor(
+        max_workers=1, thread_name_prefix="lean-snapshot-client"
+    ) as pool:
         future = pool.submit(request)
         next_report = 5.0
         last_signature: tuple[object, ...] | None = None
@@ -443,9 +454,7 @@ def _format_trace_progress(
         duration_text = (
             f" | current command {duration:.1f}s" if duration is not None else ""
         )
-        command_text = (
-            f" | line {location.line}: {location.label}{duration_text}"
-        )
+        command_text = f" | line {location.line}: {location.label}{duration_text}"
     chapter = (
         f"chapter {min(chapter_index + 1, chapter_count)}/{chapter_count}"
         if chapter_count

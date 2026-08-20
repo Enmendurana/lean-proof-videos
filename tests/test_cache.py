@@ -24,6 +24,7 @@ from proof_video.render import (
     _preview_indices,
     effective_write_speed,
 )
+from proof_video.rendering.planning import _chunk_key, _segment_key
 
 
 def test_stable_hash_is_order_independent_for_mapping_keys() -> None:
@@ -167,15 +168,33 @@ def test_full_render_key_covers_the_complete_movie() -> None:
     assert _full_key((first,), *options) != _full_key((changed,), *options)
 
 
+def test_render_keys_do_not_depend_on_offline_sympy_proposals(monkeypatch) -> None:
+    captured: list[tuple[str, ...]] = []
+
+    def record_digest(paths) -> str:
+        captured.append(tuple(path.name for path in paths))
+        return "renderer-digest"
+
+    monkeypatch.setattr("proof_video.rendering.planning.file_digest", record_digest)
+    frame = Frame(index=0, tactic="intro", goals=(Goal("g", "", latex_target="A"),))
+    frames = (frame,)
+    _segment_key(frames, 0, 24.0, 0.65, 1920, 1080, 30, "cairo")
+    _chunk_key(frames, 0, 1, 24.0, 0.65, 1920, 1080, 30)
+    _full_key(frames, 24.0, 0.65, 1920, 1080, 30, "cairo")
+
+    assert len(captured) == 3
+    assert all("sympy_matching.py" not in paths for paths in captured)
+
+
 def test_full_render_key_changes_with_semantic_identity() -> None:
     def goal(target_id: str) -> Goal:
         transition = SemanticTransition(
-            source=SemanticExpression((
-                SemanticExpressionNode("source", latex_spans=(SemanticSpan(0, 1),)),
-            )),
-            target=SemanticExpression((
-                SemanticExpressionNode(target_id, latex_spans=(SemanticSpan(0, 1),)),
-            )),
+            source=SemanticExpression(
+                (SemanticExpressionNode("source", latex_spans=(SemanticSpan(0, 1),)),)
+            ),
+            target=SemanticExpression(
+                (SemanticExpressionNode(target_id, latex_spans=(SemanticSpan(0, 1),)),)
+            ),
             edges=(SemanticTransitionEdge("source", target_id, "same-fvar", 1.0),),
         )
         return Goal("g", "", latex_target="f", semantic_transition=transition)
@@ -191,7 +210,9 @@ def test_duration_limit_accelerates_typing_not_transitions() -> None:
         Frame(
             index=index,
             tactic="",
-            goals=(Goal(f"g{index}", "", latex_target="A" * 200, lineage_id=f"l{index}"),),
+            goals=(
+                Goal(f"g{index}", "", latex_target="A" * 200, lineage_id=f"l{index}"),
+            ),
         )
         for index in range(3)
     )
@@ -233,18 +254,24 @@ def test_unlimited_duration_preserves_requested_typing_speed() -> None:
         for index in range(20)
     )
 
-    assert effective_write_speed(
-        frames,
-        requested=7.5,
-        max_duration=None,
-        transition_seconds=0.65,
-        fps=30,
-    ) == 7.5
+    assert (
+        effective_write_speed(
+            frames,
+            requested=7.5,
+            max_duration=None,
+            transition_seconds=0.65,
+            fps=30,
+        )
+        == 7.5
+    )
 
-    assert effective_write_speed(
-        frames,
-        requested=1000.0,
-        max_duration=None,
-        transition_seconds=0.65,
-        fps=30,
-    ) == 180.0
+    assert (
+        effective_write_speed(
+            frames,
+            requested=1000.0,
+            max_duration=None,
+            transition_seconds=0.65,
+            fps=30,
+        )
+        == 180.0
+    )

@@ -128,7 +128,8 @@ def _candidate_errors(
     if (
         (candidate.source_kind == "app" or candidate.target_kind == "app")
         and not candidate.exact_composite
-        and candidate.reason not in {
+        and candidate.reason
+        not in {
             "verified-structural-shell",
             "verified-premise-branch-shell",
             # Lean can encode a numeral/coercion as an application even when
@@ -167,7 +168,9 @@ def solve_transition_plan(
             admissible.append(candidate)
 
     model = cp_model.CpModel()
-    variables = [model.new_bool_var(f"edge_{index}") for index in range(len(admissible))]
+    variables = [
+        model.new_bool_var(f"edge_{index}") for index in range(len(admissible))
+    ]
     source_sets = tuple(candidate.source_indices for candidate in admissible)
     target_sets = tuple(candidate.target_indices for candidate in admissible)
     target_owners: dict[int, list] = {}
@@ -258,12 +261,8 @@ def solve_transition_plan(
                 consumed_sources.update(source_sets[candidate_index])
         selected = tuple(selected_list)
 
-    used_source = {
-        pair.source for candidate in selected for pair in candidate.pairs
-    }
-    used_target = {
-        pair.target for candidate in selected for pair in candidate.pairs
-    }
+    used_source = {pair.source for candidate in selected for pair in candidate.pairs}
+    used_target = {pair.target for candidate in selected for pair in candidate.pairs}
     plan = TransitionPlan(
         source_count=source_count,
         target_count=target_count,
@@ -326,10 +325,14 @@ def validate_transition_plan(plan: TransitionPlan) -> TransitionPlan:
         target_count=plan.target_count,
         selected=plan.selected if not fatal_errors else (),
         created_targets=(
-            plan.created_targets if not fatal_errors else tuple(range(plan.target_count))
+            plan.created_targets
+            if not fatal_errors
+            else tuple(range(plan.target_count))
         ),
         deleted_sources=(
-            plan.deleted_sources if not fatal_errors else tuple(range(plan.source_count))
+            plan.deleted_sources
+            if not fatal_errors
+            else tuple(range(plan.source_count))
         ),
         valid=plan.valid and not fatal_errors,
         errors=fatal_errors,

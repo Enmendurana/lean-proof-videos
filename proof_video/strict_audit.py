@@ -125,7 +125,9 @@ def build_hybrid_audit_chapters(
 def require_hybrid_audit(raw: dict[str, Any]) -> dict[str, Any]:
     audit = build_hybrid_audit(raw)
     if not audit["valid"]:
-        raise ValueError("strict hybrid proof audit failed: " + "; ".join(audit["errors"][:8]))
+        raise ValueError(
+            "strict hybrid proof audit failed: " + "; ".join(audit["errors"][:8])
+        )
     return audit
 
 
@@ -134,7 +136,9 @@ def require_hybrid_audit_chapters(
 ) -> dict[str, Any]:
     audit = build_hybrid_audit_chapters(metadata, chapters)
     if not audit["valid"]:
-        raise ValueError("strict hybrid proof audit failed: " + "; ".join(audit["errors"][:8]))
+        raise ValueError(
+            "strict hybrid proof audit failed: " + "; ".join(audit["errors"][:8])
+        )
     return audit
 
 
@@ -207,9 +211,7 @@ def build_strict_audit(movie: Movie) -> dict[str, Any]:
             and source_step.id < item.id < target_step.id
         }
         available_ids = (
-            visible_source_ids
-            | introduced_context_ids
-            | contracted_discharged_ids
+            visible_source_ids | introduced_context_ids | contracted_discharged_ids
         )
         visible_fingerprints = {
             steps_by_id[item].proposition_fingerprint
@@ -233,8 +235,7 @@ def build_strict_audit(movie: Movie) -> dict[str, Any]:
             )
             and not (
                 premise in steps_by_id
-                and steps_by_id[premise].proposition_lean
-                in visible_lean_propositions
+                and steps_by_id[premise].proposition_lean in visible_lean_propositions
             )
         )
         if missing:
@@ -245,9 +246,7 @@ def build_strict_audit(movie: Movie) -> dict[str, Any]:
 
     accepted_edges = 0
     rejected_edges = 0
-    for source_frame, target_frame in zip(
-        movie.frames, movie.frames[1:], strict=False
-    ):
+    for source_frame, target_frame in zip(movie.frames, movie.frames[1:], strict=False):
         target = target_frame.display_goals[0]
         transition = target.semantic_transition
         transition_errors: list[str] = []
@@ -306,7 +305,8 @@ def build_strict_audit(movie: Movie) -> dict[str, Any]:
                 "rule": target_frame.tactic,
                 "valid": not transition_errors,
                 "errors": transition_errors,
-                "certifiedEdgeCount": sum(reason_counts.values()) - len(rejected_edge_rows),
+                "certifiedEdgeCount": sum(reason_counts.values())
+                - len(rejected_edge_rows),
                 "rejectedEdges": rejected_edge_rows,
                 "reasonCounts": dict(sorted(reason_counts.items())),
             }

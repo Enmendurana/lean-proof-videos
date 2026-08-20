@@ -129,7 +129,9 @@ class StudioStore:
             )
             connection.execute("PRAGMA optimize")
 
-    def create_project(self, name: str, entry_path: str, theorem: str) -> dict[str, Any]:
+    def create_project(
+        self, name: str, entry_path: str, theorem: str
+    ) -> dict[str, Any]:
         project_id = uuid4().hex
         now = utc_now()
         with self.connect() as connection:
@@ -369,7 +371,8 @@ class StudioStore:
                         job_id,
                         path.name,
                         relative_text,
-                        mimetypes.guess_type(path.name)[0] or "application/octet-stream",
+                        mimetypes.guess_type(path.name)[0]
+                        or "application/octet-stream",
                         path.stat().st_size,
                         utc_now(),
                     ),

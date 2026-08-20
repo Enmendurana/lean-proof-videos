@@ -7,6 +7,7 @@ import re
 
 from proof_video.latex import lean_to_latex
 
+
 def _normalize_unicode_math(source: str) -> str:
     replacements = {
         "⇔": r"\Longleftrightarrow ",
@@ -48,9 +49,11 @@ def _normalize_unicode_math(source: str) -> str:
     )
     return source
 
+
 def _latex_matching_tokens(source: str) -> list[str]:
     """Tokenize LaTeX into independently renderable matching units."""
     return [token for token, _start, _end in _latex_matching_token_spans(source)]
+
 
 def _latex_matching_token_spans(source: str) -> list[tuple[str, int, int]]:
     """Return renderable LaTeX tokens together with source character spans."""
@@ -68,16 +71,39 @@ def _cached_latex_matching_token_spans(
     # Commands which consume braced arguments therefore stay attached to those
     # arguments; a bare ``\mathcal`` or ``\mathsf`` renders as a red error.
     grouped_command_arities = {
-        "mathbb": 1, "mathbf": 1, "mathcal": 1, "mathfrak": 1,
-        "mathit": 1, "mathrm": 1, "mathsf": 1, "mathtt": 1,
-        "mathnormal": 1, "boldsymbol": 1,
-        "text": 1, "operatorname": 1, "mathop": 1,
-        "bar": 1, "vec": 1, "hat": 1, "widehat": 1,
-        "tilde": 1, "widetilde": 1, "dot": 1, "ddot": 1,
-        "overline": 1, "underline": 1, "overbrace": 1, "underbrace": 1,
+        "mathbb": 1,
+        "mathbf": 1,
+        "mathcal": 1,
+        "mathfrak": 1,
+        "mathit": 1,
+        "mathrm": 1,
+        "mathsf": 1,
+        "mathtt": 1,
+        "mathnormal": 1,
+        "boldsymbol": 1,
+        "text": 1,
+        "operatorname": 1,
+        "mathop": 1,
+        "bar": 1,
+        "vec": 1,
+        "hat": 1,
+        "widehat": 1,
+        "tilde": 1,
+        "widetilde": 1,
+        "dot": 1,
+        "ddot": 1,
+        "overline": 1,
+        "underline": 1,
+        "overbrace": 1,
+        "underbrace": 1,
         "sqrt": 1,
-        "frac": 2, "dfrac": 2, "tfrac": 2, "binom": 2,
-        "overset": 2, "underset": 2, "stackrel": 2,
+        "frac": 2,
+        "dfrac": 2,
+        "tfrac": 2,
+        "binom": 2,
+        "overset": 2,
+        "underset": 2,
+        "stackrel": 2,
     }
     tokens: list[tuple[str, int, int]] = []
     index = 0
@@ -111,9 +137,20 @@ def _cached_latex_matching_token_spans(
             command = source[index:end]
             name = command[1:]
             delimiter_commands = {
-                "left", "right", "big", "Big", "bigg", "Bigg",
-                "bigl", "bigr", "Bigl", "Bigr",
-                "biggl", "biggr", "Biggl", "Biggr",
+                "left",
+                "right",
+                "big",
+                "Big",
+                "bigg",
+                "Bigg",
+                "bigl",
+                "bigr",
+                "Bigl",
+                "Bigr",
+                "biggl",
+                "biggr",
+                "Biggl",
+                "Biggr",
             }
             if name in delimiter_commands and end < len(source):
                 delimiter_end = end + 1
@@ -174,6 +211,7 @@ def _cached_latex_matching_token_spans(
 
     return tuple(tokens)
 
+
 def _split_latex_lines(source: str, target_chars: int = 68) -> list[str]:
     """Greedily split at top-level mathematical relations and connectives."""
     markers = (r"\land", r"\lor", r"\Rightarrow", r"\rightarrow", r",\ ", r"\quad")
@@ -209,13 +247,16 @@ def _split_latex_lines(source: str, target_chars: int = 68) -> list[str]:
         result.append(remaining)
     return result
 
+
 def _sanitize_leantex(source: str) -> str:
     """Escape identifier punctuation inside LeanTeX ``\text{...}`` blocks."""
+
     def escape_text(match: re.Match[str]) -> str:
         content = match.group(1).replace("_", r"\_").replace("%", r"\%")
         return rf"\text{{{content}}}"
 
     return re.sub(r"\\text\{([^{}]*)\}", escape_text, source)
+
 
 def _unwrap_leantex_fallback(source: str) -> str:
     """Convert LeanTeX's explicit unhandled-expression marker via legacy rules."""

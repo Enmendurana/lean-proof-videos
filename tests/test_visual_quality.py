@@ -35,9 +35,7 @@ def test_visual_quality_rejects_prolonged_empty_board(monkeypatch, tmp_path) -> 
             "format": {"duration": "20.0"},
         },
     )
-    monkeypatch.setattr(
-        visual_quality, "_black_intervals", lambda _path: [(4.0, 6.5)]
-    )
+    monkeypatch.setattr(visual_quality, "_black_intervals", lambda _path: [(4.0, 6.5)])
     report = visual_quality.build_visual_quality_report(
         video,
         expected_width=1920,
@@ -61,9 +59,7 @@ def test_visual_quality_accepts_progressively_written_sparse_intro(
             "format": {"duration": "20.0"},
         },
     )
-    monkeypatch.setattr(
-        visual_quality, "_black_intervals", lambda _path: [(0.0, 2.2)]
-    )
+    monkeypatch.setattr(visual_quality, "_black_intervals", lambda _path: [(0.0, 2.2)])
     monkeypatch.setattr(
         visual_quality,
         "_content_bbox_at",
@@ -97,9 +93,7 @@ def test_visual_quality_accepts_sparse_final_qed_with_wide_content(
     monkeypatch.setattr(
         visual_quality, "_black_intervals", lambda _path: [(14.0, 20.0)]
     )
-    monkeypatch.setattr(
-        visual_quality, "_last_content_bbox", lambda _path: (1650, 130)
-    )
+    monkeypatch.setattr(visual_quality, "_last_content_bbox", lambda _path: (1650, 130))
     report = visual_quality.build_visual_quality_report(
         video,
         expected_width=1920,

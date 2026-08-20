@@ -1,10 +1,8 @@
-"""Choose proof-trace granularity independently from backend novelty.
+"""Choose the canonical trace profile independently from renderer settings.
 
-The incremental Lean 4.32 frontend is the scalable choice for very large
-developments, but its source-tactic chapters intentionally expose fewer
-mathematical states than the strict proof-term extractor. Ordinary videos
-therefore prefer the proof-term extractor, while explicitly resumable sources
-keep the incremental hybrid trace.
+Native ABI 5 source actions expose complete ordered goal frontiers and are the
+owned semantic boundary of the project. The proof-term extractor remains an
+explicit fine-grained compatibility/debug option, not a competing default.
 """
 
 from __future__ import annotations
@@ -49,12 +47,7 @@ def resolve_trace_profile(
     marked_resumable = source_is_resumable(lean_file)
     mode = requested_mode
     if mode == "auto":
-        scalable_requested = (
-            marked_resumable
-            or requested_toolchain == "lean-4.32"
-            or requested_trace_backend == "snapshot"
-        )
-        mode = "hybrid" if scalable_requested else "proof-term"
+        mode = "hybrid"
 
     if mode == "proof-term":
         return TraceProfile(
@@ -78,9 +71,9 @@ def resolve_trace_profile(
             trace_backend=requested_trace_backend,
             resumable=resume or marked_resumable,
             description=(
-                "Long-proof scalable snapshot profile enabled."
+                "Canonical ABI 5 resumable snapshot profile enabled."
                 if marked_resumable
-                else "Scalable source-tactic profile enabled."
+                else "Canonical ABI 5 source-action profile enabled."
             ),
         )
 

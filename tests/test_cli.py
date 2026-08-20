@@ -36,10 +36,31 @@ def test_default_is_standard_youtube_landscape() -> None:
     assert not hasattr(args, "step_seconds")
 
 
-def test_60_fps_is_an_explicit_profile() -> None:
-    args = build_parser().parse_args(
-        ["Proof.lean", "demo", "--quality", "high60"]
+def test_path_fragments_are_deduplicated_without_reordering() -> None:
+    separator = cli.os.pathsep
+    assert cli._deduplicated_path(
+        separator.join(("first", "second", "first")),
+        separator.join(("second", "third")),
+    ) == separator.join(("first", "second", "third"))
+
+
+@pytest.mark.skipif(cli.os.name != "nt", reason="Windows PATH restoration")
+def test_restore_windows_path_is_idempotent(monkeypatch) -> None:
+    python_dir = str(cli.Path(cli.sys.executable).parent)
+    monkeypatch.setenv(
+        "PATH",
+        cli.os.pathsep.join((python_dir, python_dir.upper(), r"C:\Tools")),
     )
+
+    cli._restore_windows_path()
+    restored = cli.os.environ["PATH"]
+    cli._restore_windows_path()
+
+    assert cli.os.environ["PATH"] == restored
+
+
+def test_60_fps_is_an_explicit_profile() -> None:
+    args = build_parser().parse_args(["Proof.lean", "demo", "--quality", "high60"])
     assert QUALITY[args.quality] == (1920, 1080, 60)
 
 
@@ -172,7 +193,9 @@ def test_full_render_is_routed_without_preview_argument(monkeypatch, tmp_path) -
     monkeypatch.setattr(
         render,
         "render_segmented",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("segmented render called")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("segmented render called")
+        ),
     )
 
     result = cli.main(
@@ -398,7 +421,9 @@ def test_preview_uses_segmented_rendering(monkeypatch, tmp_path, capsys) -> None
     monkeypatch.setattr(
         render,
         "render_full",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("full render called")),
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("full render called")
+        ),
         raising=False,
     )
     monkeypatch.setattr(
@@ -428,11 +453,15 @@ def test_preview_uses_segmented_rendering(monkeypatch, tmp_path, capsys) -> None
     assert "Segments:" in output
 
 
-def test_json_only_writes_transition_map_without_rendering(monkeypatch, tmp_path) -> None:
+def test_json_only_writes_transition_map_without_rendering(
+    monkeypatch, tmp_path
+) -> None:
     monkeypatch.setattr(cli, "_restore_windows_path", lambda: None)
     monkeypatch.setattr(cli, "read_json", lambda _path: _raw_trace())
     writes = []
-    monkeypatch.setattr(cli, "write_json", lambda path, value: writes.append((path, value)))
+    monkeypatch.setattr(
+        cli, "write_json", lambda path, value: writes.append((path, value))
+    )
 
     destination = tmp_path / "transitions.json"
     result = cli.main(
@@ -451,7 +480,7 @@ def test_json_only_writes_transition_map_without_rendering(monkeypatch, tmp_path
 
     assert result == 0
     transition_write = next(value for path, value in writes if path == destination)
-    assert transition_write["schemaVersion"] == 1
+    assert transition_write["schemaVersion"] == 2
     assert transition_write["theorem"] == "demo"
 
 
@@ -463,13 +492,15 @@ def test_remotion_render_is_routed_to_remotion_engine(monkeypatch, tmp_path) -> 
     monkeypatch.setattr(
         remotion_render,
         "render_remotion",
-        lambda *args, **kwargs: calls.append((args, kwargs))
-        or SimpleNamespace(
-            states=2,
-            duration_seconds=3.0,
-            cached_segments=0,
-            rendered_segments=1,
-            chars_per_second=24.0,
+        lambda *args, **kwargs: (
+            calls.append((args, kwargs))
+            or SimpleNamespace(
+                states=2,
+                duration_seconds=3.0,
+                cached_segments=0,
+                rendered_segments=1,
+                chars_per_second=24.0,
+            )
         ),
     )
 
@@ -504,19 +535,28 @@ def test_remotion_preview_is_routed_as_twenty_seconds(monkeypatch, tmp_path) -> 
     monkeypatch.setattr(
         remotion_render,
         "render_remotion",
-        lambda *args, **kwargs: calls.append(kwargs)
-        or SimpleNamespace(
-            states=2,
-            duration_seconds=20.0,
-            cached_segments=0,
-            rendered_segments=1,
-            chars_per_second=24.0,
+        lambda *args, **kwargs: (
+            calls.append(kwargs)
+            or SimpleNamespace(
+                states=2,
+                duration_seconds=20.0,
+                cached_segments=0,
+                rendered_segments=1,
+                chars_per_second=24.0,
+            )
         ),
     )
-    result = cli.main([
-        "Proof.lean", "demo", "--trace", str(tmp_path / "trace.json"),
-        "--output", str(tmp_path / "proof.mp4"), "--preview",
-    ])
+    result = cli.main(
+        [
+            "Proof.lean",
+            "demo",
+            "--trace",
+            str(tmp_path / "trace.json"),
+            "--output",
+            str(tmp_path / "proof.mp4"),
+            "--preview",
+        ]
+    )
 
     assert result == 0
     assert calls[0]["preview_seconds"] == 20.0
@@ -530,19 +570,29 @@ def test_remotion_preview_duration_is_configurable(monkeypatch, tmp_path) -> Non
     monkeypatch.setattr(
         remotion_render,
         "render_remotion",
-        lambda *args, **kwargs: calls.append(kwargs)
-        or SimpleNamespace(
-            states=2,
-            duration_seconds=10.0,
-            cached_segments=0,
-            rendered_segments=1,
-            chars_per_second=24.0,
+        lambda *args, **kwargs: (
+            calls.append(kwargs)
+            or SimpleNamespace(
+                states=2,
+                duration_seconds=10.0,
+                cached_segments=0,
+                rendered_segments=1,
+                chars_per_second=24.0,
+            )
         ),
     )
-    result = cli.main([
-        "Proof.lean", "demo", "--trace", str(tmp_path / "trace.json"),
-        "--output", str(tmp_path / "proof.mp4"), "--preview-seconds", "10",
-    ])
+    result = cli.main(
+        [
+            "Proof.lean",
+            "demo",
+            "--trace",
+            str(tmp_path / "trace.json"),
+            "--output",
+            str(tmp_path / "proof.mp4"),
+            "--preview-seconds",
+            "10",
+        ]
+    )
 
     assert result == 0
     assert calls[0]["preview_seconds"] == 10.0

@@ -29,9 +29,7 @@ def test_renderer_fingerprint_tracks_transitive_typescript_and_mjs_sources(
         "export const x = 1;", encoding="utf-8"
     )
     with_latex_helper = _renderer_fingerprint(remotion)
-    (remotion / "concurrency.mjs").write_text(
-        "export const x = 2;", encoding="utf-8"
-    )
+    (remotion / "concurrency.mjs").write_text("export const x = 2;", encoding="utf-8")
 
     assert baseline != with_latex_helper
     assert with_latex_helper != _renderer_fingerprint(remotion)

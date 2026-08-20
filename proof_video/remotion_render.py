@@ -56,7 +56,9 @@ def _cached_chunk_matches_profile(chunk, render_plan: RenderPlan) -> bool:
     """Validate MP4, renderer and calibrated encoder before skipping Node."""
 
     try:
-        profile = json.loads(Path(render_plan.profile_store).read_text(encoding="utf-8"))
+        profile = json.loads(
+            Path(render_plan.profile_store).read_text(encoding="utf-8")
+        )
         metadata = json.loads(
             Path(f"{chunk.output}.render.json").read_text(encoding="utf-8")
         )
@@ -68,17 +70,14 @@ def _cached_chunk_matches_profile(chunk, render_plan: RenderPlan) -> bool:
             chunk.output.is_file()
             and chunk.output.stat().st_size > 0
             and profile.get("schemaVersion") == 1
-            and profile.get("rendererFingerprint")
-            == render_plan.renderer_fingerprint
-            and profile.get("hardwareFingerprint")
-            == render_plan.hardware.fingerprint
+            and profile.get("rendererFingerprint") == render_plan.renderer_fingerprint
+            and profile.get("hardwareFingerprint") == render_plan.hardware.fingerprint
             and profile.get("width") == render_plan.width
             and profile.get("height") == render_plan.height
             and profile.get("fps") == render_plan.fps
             and metadata.get("schemaVersion") == 1
             and metadata.get("key") == chunk.key
-            and metadata.get("rendererFingerprint")
-            == render_plan.renderer_fingerprint
+            and metadata.get("rendererFingerprint") == render_plan.renderer_fingerprint
             and metadata.get("encoding") == expected_encoding
         )
     except (OSError, UnicodeError, ValueError, KeyError, TypeError):
@@ -104,9 +103,12 @@ def _renderer_fingerprint(remotion_root: Path) -> str:
             remotion_root / "package-lock.json",
         )
         if path.is_file()
-        and path.suffix.lower() in {".mjs", ".js", ".jsx", ".ts", ".tsx", ".json", ".css"}
+        and path.suffix.lower()
+        in {".mjs", ".js", ".jsx", ".ts", ".tsx", ".json", ".css"}
     ]
-    for path in sorted(paths, key=lambda item: item.relative_to(remotion_root).as_posix()):
+    for path in sorted(
+        paths, key=lambda item: item.relative_to(remotion_root).as_posix()
+    ):
         relative = path.relative_to(remotion_root).as_posix()
         digest.update(relative.encode("utf-8"))
         digest.update(b"\0")
@@ -120,9 +122,9 @@ def _timeline_key(
 ) -> str:
     digest = hashlib.sha256()
     digest.update(
-        json.dumps(timeline, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-            "utf-8"
-        )
+        json.dumps(
+            timeline, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
     )
     digest.update(_renderer_fingerprint(remotion_root).encode("ascii"))
     if render_plan is not None:
@@ -132,7 +134,11 @@ def _timeline_key(
                     "hardware": render_plan.hardware.fingerprint,
                     "hardwarePolicy": render_plan.hardware_policy,
                     "renderer": render_plan.renderer_fingerprint,
-                    "dimensions": [render_plan.width, render_plan.height, render_plan.fps],
+                    "dimensions": [
+                        render_plan.width,
+                        render_plan.height,
+                        render_plan.fps,
+                    ],
                     "nvencBitrates": render_plan.nvenc_bitrates,
                     "minimumSsim": render_plan.minimum_ssim,
                 },
@@ -183,7 +189,9 @@ def render_remotion(
         )
     node = shutil.which("node")
     if node is None:
-        raise RuntimeError("Node.js was not found on PATH; it is required for Remotion.")
+        raise RuntimeError(
+            "Node.js was not found on PATH; it is required for Remotion."
+        )
 
     last_timeline_percent = -1
     last_timeline_report = 0.0
@@ -336,7 +344,9 @@ def render_remotion(
         os.replace(chunk_manifest_temporary, chunk_manifest)
         render_plan_path = checkpoint_dir / "render-plan.json"
         render_plan_path.write_text(
-            json.dumps(render_plan.to_json(), ensure_ascii=False, separators=(",", ":")),
+            json.dumps(
+                render_plan.to_json(), ensure_ascii=False, separators=(",", ":")
+            ),
             encoding="utf-8",
         )
         command = [
@@ -368,7 +378,9 @@ def render_remotion(
                 f"Remotion semantic: all {len(chunks)} checkpoints validated from cache.",
                 flush=True,
             )
-        missing = [path for path in chunks if not path.exists() or path.stat().st_size == 0]
+        missing = [
+            path for path in chunks if not path.exists() or path.stat().st_size == 0
+        ]
         if missing:
             raise RuntimeError(
                 f"Remotion did not create {len(missing)} checkpoint chunk(s); "
@@ -416,7 +428,9 @@ def render_remotion(
         )
         render_plan_path = Path(temporary) / "render-plan.json"
         render_plan_path.write_text(
-            json.dumps(render_plan.to_json(), ensure_ascii=False, separators=(",", ":")),
+            json.dumps(
+                render_plan.to_json(), ensure_ascii=False, separators=(",", ":")
+            ),
             encoding="utf-8",
         )
         command = [
@@ -436,10 +450,14 @@ def render_remotion(
         try:
             subprocess.run(command, cwd=remotion_root, check=True)
         except subprocess.CalledProcessError as error:
-            raise RuntimeError(f"Remotion render failed with exit code {error.returncode}.") from error
+            raise RuntimeError(
+                f"Remotion render failed with exit code {error.returncode}."
+            ) from error
 
     if not rendering.exists() or rendering.stat().st_size == 0:
-        raise RuntimeError("Remotion reported success but did not create a non-empty MP4.")
+        raise RuntimeError(
+            "Remotion reported success but did not create a non-empty MP4."
+        )
     if use_cache:
         cached_rendering = master.with_suffix(".rendering.mp4")
         shutil.copy2(rendering, cached_rendering)

@@ -15,9 +15,7 @@ def _project(root: Path) -> None:
     (root / "Animate" / "Schema.lean").write_text(
         "import Lean\nnamespace Animate\nend Animate\n", encoding="utf-8"
     )
-    (root / "lean-toolchain").write_text(
-        "leanprover/lean4:v4.28.0\n", encoding="utf-8"
-    )
+    (root / "lean-toolchain").write_text("leanprover/lean4:v4.28.0\n", encoding="utf-8")
 
 
 def _passing_gates() -> dict[str, bool]:
@@ -76,9 +74,14 @@ def test_432_workspace_is_isolated_and_preserves_source_layout(tmp_path: Path) -
     assert mirrored_text.startswith(
         "import SnapshotCertificate432\nimport ProofLatex\n"
     )
-    assert mirrored.read_text(encoding="utf-8").endswith(source.read_text(encoding="utf-8"))
-    assert (backend.execution_root / "lean-toolchain").read_text().strip().endswith(
-        "v4.32.1"
+    assert mirrored.read_text(encoding="utf-8").endswith(
+        source.read_text(encoding="utf-8")
+    )
+    assert (
+        (backend.execution_root / "lean-toolchain")
+        .read_text()
+        .strip()
+        .endswith("v4.32.1")
     )
     assert (backend.execution_root / "Animate" / "Schema.lean").is_file()
     assert "v4.32.1" in (backend.execution_root / "lakefile.lean").read_text()

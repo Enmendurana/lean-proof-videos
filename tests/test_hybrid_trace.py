@@ -87,9 +87,7 @@ def test_hybrid_audit_requires_kernel_and_tactic_certificates() -> None:
     assert audit["summary"]["chapters"] == 2
     assert audit["summary"]["certifiedGoalActions"] == 2
 
-    raw["chapters"][1]["movie"]["actions"][0]["goalActions"][0][
-        "proofFingerprint"
-    ] = ""
+    raw["chapters"][1]["movie"]["actions"][0]["goalActions"][0]["proofFingerprint"] = ""
     broken = build_hybrid_audit(raw)
     assert not broken["valid"]
     assert "no certified assignment" in " ".join(broken["errors"])

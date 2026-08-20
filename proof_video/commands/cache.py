@@ -132,7 +132,8 @@ def prune(root: Path, scope: str) -> tuple[int, int]:
         targets = [
             path
             for path in root.rglob("*")
-            if path.is_file() and any(path.name.endswith(suffix) for suffix in _TEMP_SUFFIXES)
+            if path.is_file()
+            and any(path.name.endswith(suffix) for suffix in _TEMP_SUFFIXES)
         ]
         for path in targets:
             if not _inside(root, path):

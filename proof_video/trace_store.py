@@ -100,7 +100,9 @@ def ingest_hybrid_manifest(
     object_store.mkdir(parents=True, exist_ok=True)
     rewritten: list[dict[str, Any]] = []
 
-    def prepare_reference(reference: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], str]:
+    def prepare_reference(
+        reference: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], str]:
         source = _resolve_object_path(reference, source_base)
         chapter = read_json(source)
         digest = _chapter_digest(chapter)
@@ -155,9 +157,7 @@ def hydrate_hybrid_manifest(
     chapters = list(iter_hybrid_chapters(manifest, base_dir=base_dir))
     return {
         "schemaVersion": (
-            "4.0"
-            if str(manifest.get("schemaVersion", "")).startswith("4.")
-            else "3.0"
+            "4.0" if str(manifest.get("schemaVersion", "")).startswith("4.") else "3.0"
         ),
         "theoremName": manifest.get("theoremName", ""),
         "source": manifest.get("source", ""),
@@ -208,7 +208,9 @@ def relativize_hybrid_manifest(
         rewritten.append(
             {
                 **reference,
-                "objectPath": Path(os.path.relpath(path, manifest_dir.resolve())).as_posix(),
+                "objectPath": Path(
+                    os.path.relpath(path, manifest_dir.resolve())
+                ).as_posix(),
             }
         )
     return {**manifest, "chapterRefs": rewritten}

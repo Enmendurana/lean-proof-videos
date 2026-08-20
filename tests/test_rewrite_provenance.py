@@ -2,9 +2,7 @@ from proof_video.proof.rewrite_provenance import directed_rewrite_origins
 from proof_video.proof.schema import ProofStep, SemanticExpressionNode, SemanticSpan
 
 
-def _step(
-    latex: str, nodes: tuple[SemanticExpressionNode, ...]
-) -> ProofStep:
+def _step(latex: str, nodes: tuple[SemanticExpressionNode, ...]) -> ProofStep:
     return ProofStep(
         id=7,
         scope_id="root",
@@ -29,46 +27,67 @@ def test_reverse_rewrite_uses_the_actual_left_result_not_an_equal_descendant() -
         equality,
         (
             SemanticExpressionNode(
-                "root", kind="app", path=("0",),
+                "root",
+                kind="app",
+                path=("0",),
                 latex_spans=(SemanticSpan(0, len(equality)),),
             ),
             SemanticExpressionNode(
-                "left-u", kind="fvar", identity="u", path=("0", "0"),
+                "left-u",
+                kind="fvar",
+                identity="u",
+                path=("0", "0"),
                 latex_spans=(SemanticSpan(0, 1),),
             ),
             SemanticExpressionNode(
-                "right", kind="app", fingerprint="v-plus-u", path=("0", "1"),
+                "right",
+                kind="app",
+                fingerprint="v-plus-u",
+                path=("0", "1"),
                 latex_spans=(SemanticSpan(2, len(equality)),),
             ),
             SemanticExpressionNode(
-                "right-inner-u", kind="fvar", identity="u", path=("0", "1", "1"),
+                "right-inner-u",
+                kind="fvar",
+                identity="u",
+                path=("0", "1", "1"),
                 latex_spans=(SemanticSpan(4, 5),),
             ),
         ),
     )
     source_nodes = (
         SemanticExpressionNode(
-            "proof-context-7/left-u", kind="fvar", identity="u",
+            "proof-context-7/left-u",
+            kind="fvar",
+            identity="u",
             path=("context", 7, "0", "0"),
             latex_spans=(SemanticSpan(0, 1),),
         ),
         SemanticExpressionNode(
-            "proof-context-7/right", kind="app", fingerprint="v-plus-u",
+            "proof-context-7/right",
+            kind="app",
+            fingerprint="v-plus-u",
             path=("context", 7, "0", "1"),
             latex_spans=(SemanticSpan(2, 5),),
         ),
         SemanticExpressionNode(
-            "proof-context-7/right-inner-u", kind="fvar", identity="u",
+            "proof-context-7/right-inner-u",
+            kind="fvar",
+            identity="u",
             path=("context", 7, "0", "1", "1"),
             latex_spans=(SemanticSpan(4, 5),),
         ),
     )
     old = SemanticExpressionNode(
-        "old", kind="app", fingerprint="v-plus-u",
+        "old",
+        kind="app",
+        fingerprint="v-plus-u",
         latex_spans=(SemanticSpan(2, 5),),
     )
     new = SemanticExpressionNode(
-        "new", kind="fvar", identity="u",
+        "new",
+        kind="fvar",
+        identity="u",
         latex_spans=(SemanticSpan(0, 1),),
     )
 

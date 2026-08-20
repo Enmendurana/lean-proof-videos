@@ -44,9 +44,7 @@ def _belongs_to_visible_step(node_id: str, step_id: int) -> bool:
     return node_id.startswith(marker) or f"/{marker}" in node_id
 
 
-def _contains_path(
-    outer: tuple[str | int, ...], inner: tuple[str | int, ...]
-) -> bool:
+def _contains_path(outer: tuple[str | int, ...], inner: tuple[str | int, ...]) -> bool:
     return len(inner) >= len(outer) and inner[: len(outer)] == outer
 
 
@@ -109,9 +107,7 @@ def premise_branch_edges(
         and span_extent(source_by_id[edge.source_node_id]) > 1
     ]
     claimed_target_ids = {edge.target_node_id for edge in conclusion_edges}
-    available_target_atoms: dict[
-        tuple[str, str], list[SemanticExpressionNode]
-    ] = {}
+    available_target_atoms: dict[tuple[str, str], list[SemanticExpressionNode]] = {}
     for node in target_nodes:
         if (
             node.node_id.startswith("proof-context-")
@@ -146,9 +142,7 @@ def premise_branch_edges(
                 )
             )
         branch_sources = tuple(
-            node
-            for nodes in branch_sources_by_leaf.values()
-            for node in nodes
+            node for nodes in branch_sources_by_leaf.values() for node in nodes
         )
         if not branch_sources:
             continue
@@ -227,17 +221,13 @@ def premise_branch_edges(
             (path_without_sequent_prefix(node.path), node.kind): node
             for node in carrier_sources
         }
-        carrier_by_path: dict[
-            tuple[str | int, ...], list[SemanticExpressionNode]
-        ] = {}
+        carrier_by_path: dict[tuple[str | int, ...], list[SemanticExpressionNode]] = {}
         for node in carrier_sources:
             carrier_by_path.setdefault(
                 path_without_sequent_prefix(node.path), []
             ).append(node)
 
-        anchors: list[
-            tuple[int, SemanticExpressionNode, SemanticExpressionNode]
-        ] = []
+        anchors: list[tuple[int, SemanticExpressionNode, SemanticExpressionNode]] = []
         for branch_node in branch_nodes:
             if span_extent(branch_node) <= 1:
                 continue
@@ -265,17 +255,12 @@ def premise_branch_edges(
                 if not (structural_anchor or exact_anchor):
                     continue
                 target_text = node_latex(target_node, target_sequent)
-                if (
-                    structural_anchor
-                    or (
-                        branch_text
-                        and rendered_expression_key(branch_text)
-                        == rendered_expression_key(target_text)
-                    )
+                if structural_anchor or (
+                    branch_text
+                    and rendered_expression_key(branch_text)
+                    == rendered_expression_key(target_text)
                 ):
-                    anchors.append(
-                        (span_extent(target_node), branch_node, target_node)
-                    )
+                    anchors.append((span_extent(target_node), branch_node, target_node))
 
         anchored_targets: list[SemanticExpressionNode] = []
         for _extent, branch_anchor, target_anchor in sorted(
@@ -309,8 +294,7 @@ def premise_branch_edges(
                 target_path = (*target_anchor_path, *suffix)
                 target_node = target_descendants.get((target_path, branch_node.kind))
                 if target_node is None and (
-                    target_rule == "forall-introduction"
-                    and branch_node.kind == "fvar"
+                    target_rule == "forall-introduction" and branch_node.kind == "fvar"
                 ):
                     target_node = target_descendants.get((target_path, "bvar"))
                 if target_node is None or _covered_by(target_node, owned_targets):
@@ -323,9 +307,7 @@ def premise_branch_edges(
                 )
                 carrier_at_path = carrier_by_path.get(branch_path, ())
                 carrier_expression = (
-                    max(carrier_at_path, key=span_extent)
-                    if carrier_at_path
-                    else None
+                    max(carrier_at_path, key=span_extent) if carrier_at_path else None
                 )
                 directed_origins = (
                     directed_rewrite_origins(
@@ -382,21 +364,18 @@ def premise_branch_edges(
                                 span_extent(source_node),
                                 source_node.node_id,
                                 target_node.node_id,
-                                (
-                                    "verified-premise-branch-copy"
-                                ),
+                                ("verified-premise-branch-copy"),
                             )
                         )
 
-                carrier_node = carrier_by_path_kind.get(
-                    (branch_path, branch_node.kind)
-                )
+                carrier_node = carrier_by_path_kind.get((branch_path, branch_node.kind))
                 if (
                     carrier_node is not None
                     and branch_node.kind not in _ATOMIC_KINDS
                     and rendered_expression_key(
                         node_latex(carrier_node, source_sequent)
-                    ) != target_text
+                    )
+                    != target_text
                 ):
                     candidates.append(
                         (

@@ -10,7 +10,9 @@ from proof_video.incremental_snapshot import (
 
 def _fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     source = tmp_path / "Proof.lean"
-    source.write_text("import Demo\n\ntheorem proof : True := by trivial\n", encoding="utf-8")
+    source.write_text(
+        "import Demo\n\ntheorem proof : True := by trivial\n", encoding="utf-8"
+    )
     manifest = tmp_path / "lake-manifest.json"
     manifest.write_text('{"version":"1"}', encoding="utf-8")
     dependency = tmp_path / "Demo.olean"
@@ -66,10 +68,14 @@ def test_import_or_olean_change_rejects_snapshot(tmp_path: Path) -> None:
     source, manifest, dependency, snapshot = _fixture(tmp_path)
     _commit(snapshot, source, manifest)
 
-    source.write_text("import Other\n\ntheorem proof : True := by trivial\n", encoding="utf-8")
+    source.write_text(
+        "import Other\n\ntheorem proof : True := by trivial\n", encoding="utf-8"
+    )
     assert _validate(snapshot, source, manifest).status == "environment-mismatch"
 
-    source.write_text("import Demo\n\ntheorem proof : True := by trivial\n", encoding="utf-8")
+    source.write_text(
+        "import Demo\n\ntheorem proof : True := by trivial\n", encoding="utf-8"
+    )
     dependency.write_bytes(b"changed")
     assert _validate(snapshot, source, manifest).status == "environment-mismatch"
 
@@ -82,14 +88,18 @@ def test_corrupt_or_interrupted_snapshot_is_never_valid(tmp_path: Path) -> None:
     assert _validate(snapshot, source, manifest).status == "snapshot-hash-mismatch"
 
 
-def test_manifest_or_dependency_list_corruption_rejects_snapshot(tmp_path: Path) -> None:
+def test_manifest_or_dependency_list_corruption_rejects_snapshot(
+    tmp_path: Path,
+) -> None:
     source, manifest, _dependency, snapshot = _fixture(tmp_path)
     _commit(snapshot, source, manifest)
     manifest.write_text('{"version":"2"}', encoding="utf-8")
     assert _validate(snapshot, source, manifest).status == "environment-mismatch"
 
     manifest.write_text('{"version":"1"}', encoding="utf-8")
-    snapshot_deps_path(snapshot).write_text("not-json-and-not-a-path\n", encoding="utf-8")
+    snapshot_deps_path(snapshot).write_text(
+        "not-json-and-not-a-path\n", encoding="utf-8"
+    )
     assert _validate(snapshot, source, manifest).status in {
         "environment-mismatch",
         "deps-hash-mismatch",

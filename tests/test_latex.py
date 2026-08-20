@@ -79,28 +79,56 @@ def test_short_logical_relation_commands_are_displayed_as_long_arrows() -> None:
 
 def test_latex_matching_tokens_preserve_algebraic_parts() -> None:
     assert _latex_matching_tokens(r"2 \cdot b + 2 \cdot a") == [
-        "2", r"\cdot", "b", "+", "2", r"\cdot", "a"
+        "2",
+        r"\cdot",
+        "b",
+        "+",
+        "2",
+        r"\cdot",
+        "a",
     ]
     assert _latex_matching_tokens(r"2 \cdot (a + b)") == [
-        "2", r"\cdot", "(", "a", "+", "b", ")"
+        "2",
+        r"\cdot",
+        "(",
+        "a",
+        "+",
+        "b",
+        ")",
     ]
 
 
 def test_latex_matching_tokens_ignore_geometry_free_spacing_commands() -> None:
     assert _latex_matching_tokens(r"\forall x : \mathbb{R},\ x \leq 0") == [
-        r"\forall", "x", ":", r"\mathbb{R}", ",", "x", r"\leq", "0"
+        r"\forall",
+        "x",
+        ":",
+        r"\mathbb{R}",
+        ",",
+        "x",
+        r"\leq",
+        "0",
     ]
 
 
 def test_latex_matching_tokens_keep_complete_stretchy_delimiters() -> None:
     assert _latex_matching_tokens(r"\min\left(0,s\right)") == [
-        r"\min", r"\left(", "0", ",", "s", r"\right)",
+        r"\min",
+        r"\left(",
+        "0",
+        ",",
+        "s",
+        r"\right)",
     ]
     assert _latex_matching_tokens(r"\left\{x\right\}") == [
-        r"\left\{", "x", r"\right\}",
+        r"\left\{",
+        "x",
+        r"\right\}",
     ]
     assert _latex_matching_tokens(r"\bigl[x\bigr]") == [
-        r"\bigl[", "x", r"\bigr]",
+        r"\bigl[",
+        "x",
+        r"\bigr]",
     ]
 
 

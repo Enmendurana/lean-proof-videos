@@ -6,7 +6,7 @@ import type {ProofTimeline} from './types-semantic';
 
 const emptyTimeline: ProofTimeline = {
   schemaVersion: 1,
-  rendererContract: 'strict-proof-transition-v15-overlapped-proof-use',
+  rendererContract: 'strict-proof-transition-v16-goal-forest',
   theorem: 'proof',
   width: 1280,
   height: 720,
@@ -17,9 +17,20 @@ const emptyTimeline: ProofTimeline = {
   writeSpeed: 24,
   celebrationFrames: 60,
   completionHoldFrames: 90,
-  showQed: true,
+  terminalCompletion: {
+    status: 'unknown', source: 'empty-composition', actionIndex: null,
+    remainingGoalIds: [], certifiedClosed: false,
+  },
+  showQed: false,
   edgeReasons: [],
-  states: [{id: 'empty', proofFrameIndex: 0, tactic: '', lineageId: '', rows: []}],
+  states: [{
+    id: 'empty', proofFrameIndex: 0, tactic: '', lineageId: '', rows: [],
+    goalForest: {
+      id: 'empty', stateFingerprint: '', rootCardIds: [], focusCardIds: [],
+      activeCardId: null, introducedCardIds: [], retiredCardIds: [],
+      closedCardIds: [], cards: [],
+    },
+  }],
   transitions: [],
 };
 

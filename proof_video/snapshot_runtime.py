@@ -57,7 +57,9 @@ def _validate_kernel_certificate(
             and bool(rows)
             and rows[-1].get("theoremName") == theorem
             and all(row.get("validation", {}).get("valid") is True for row in rows)
-            and all(row.get("validation", {}).get("kernelChecked") is True for row in rows)
+            and all(
+                row.get("validation", {}).get("kernelChecked") is True for row in rows
+            )
             and all(row.get("validation", {}).get("noSorry") is True for row in rows)
         )
     except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError):

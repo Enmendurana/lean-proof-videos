@@ -55,6 +55,7 @@ const supportedContracts = new Set([
   'strict-proof-transition-v13-action-lineage',
   'strict-proof-transition-v14-staged-proof-use',
   'strict-proof-transition-v15-overlapped-proof-use',
+  'strict-proof-transition-v16-goal-forest',
 ]);
 if (timeline.schemaVersion !== 1 || !supportedContracts.has(timeline.rendererContract)) {
   throw new Error(

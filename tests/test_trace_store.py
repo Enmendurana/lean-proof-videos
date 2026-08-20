@@ -26,10 +26,20 @@ def _chapter(theorem: str, fingerprint: str) -> dict:
         "id": 0,
         "theoremName": theorem,
         "dependencies": [],
-        "movie": {"theoremName": theorem, "startGoal": {"goalId": "g", "state": "⊢ True"}, "actions": [], "highlighting": []},
+        "movie": {
+            "theoremName": theorem,
+            "startGoal": {"goalId": "g", "state": "⊢ True"},
+            "actions": [],
+            "highlighting": [],
+        },
         "proofFingerprint": fingerprint,
         "axioms": [],
-        "validation": {"valid": True, "kernelChecked": True, "noSorry": True, "errors": []},
+        "validation": {
+            "valid": True,
+            "kernelChecked": True,
+            "noSorry": True,
+            "errors": [],
+        },
         "isMain": True,
     }
 
@@ -102,12 +112,22 @@ def test_manifest_rejects_changed_object_content(tmp_path) -> None:
     manifest = {
         "schemaVersion": "3.1",
         "theoremName": "Demo.main",
-        "chapterRefs": [{"theoremName": "Demo.main", "proofFingerprint": "proof-1", "objectPath": str(raw)}],
+        "chapterRefs": [
+            {
+                "theoremName": "Demo.main",
+                "proofFingerprint": "proof-1",
+                "objectPath": str(raw),
+            }
+        ],
         "validation": {"valid": True},
     }
     stored = ingest_hybrid_manifest(manifest, tmp_path / "objects")
-    object_path = tmp_path / "objects" / f"{stored['chapterRefs'][0]['objectHash']}.json"
-    object_path.write_text(json.dumps(_chapter("Demo.main", "proof-2")), encoding="utf-8")
+    object_path = (
+        tmp_path / "objects" / f"{stored['chapterRefs'][0]['objectHash']}.json"
+    )
+    object_path.write_text(
+        json.dumps(_chapter("Demo.main", "proof-2")), encoding="utf-8"
+    )
     with pytest.raises(ValueError, match="hash mismatch"):
         hydrate_hybrid_manifest(stored)
 
