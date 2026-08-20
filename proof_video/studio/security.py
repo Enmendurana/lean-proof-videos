@@ -38,7 +38,9 @@ class StudioSecurity:
             "nonce": secrets.token_urlsafe(18),
         }
         encoded = _b64(json.dumps(payload, separators=(",", ":")).encode())
-        signature = _b64(hmac.new(self.secret, encoded.encode(), hashlib.sha256).digest())
+        signature = _b64(
+            hmac.new(self.secret, encoded.encode(), hashlib.sha256).digest()
+        )
         return f"{encoded}.{signature}"
 
     def exchange_bootstrap_token(self, token: str) -> str:

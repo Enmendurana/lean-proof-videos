@@ -36,7 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
         prog="lean-proof-video",
         description="Render a verified Lean theorem as a cinematic MP4.",
     )
-    parser.add_argument("lean_file", type=Path, help="Lean source containing the theorem")
+    parser.add_argument(
+        "lean_file", type=Path, help="Lean source containing the theorem"
+    )
     parser.add_argument("theorem", help="Fully qualified theorem name")
     parser.add_argument("-o", "--output", type=Path, default=Path("proof.mp4"))
     parser.add_argument("--quality", choices=QUALITY, default="high")
@@ -50,7 +52,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--engine",
         choices=("manim", "remotion"),
         default="remotion",
-        help="Use the faster Remotion renderer (default) or the legacy Manim renderer",
+        help=(
+            "Use the faster Remotion renderer (default) or the alternative "
+            "Manim renderer; ABI 5 gives both the same semantic plan"
+        ),
     )
     parser.add_argument(
         "--renderer",
@@ -152,8 +157,16 @@ def build_parser() -> argparse.ArgumentParser:
             "The --chars-per-second alias is retained for compatibility."
         ),
     )
-    parser.add_argument("--json-only", action="store_true", help="Only export the Lean trace next to the output")
-    parser.add_argument("--trace", type=Path, help="Use an existing Animate JSON trace instead of running Lean")
+    parser.add_argument(
+        "--json-only",
+        action="store_true",
+        help="Only export the Lean trace next to the output",
+    )
+    parser.add_argument(
+        "--trace",
+        type=Path,
+        help="Use an existing Animate JSON trace instead of running Lean",
+    )
     parser.add_argument(
         "--rebuild-trace",
         action="store_true",
@@ -276,7 +289,9 @@ def main(argv: list[str] | None = None) -> int:
         try:
             chunk_seconds = float(args.render_chunking)
         except ValueError as error:
-            raise SystemExit("--render-chunking must be auto, off, or seconds") from error
+            raise SystemExit(
+                "--render-chunking must be auto, off, or seconds"
+            ) from error
         if chunk_seconds <= 0:
             raise SystemExit("--render-chunking seconds must be greater than zero")
     if args.lean_workers <= 0:
@@ -286,9 +301,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.trace and (
         args.rebuild_trace or args.force_lean_export or args.rebuild_chapter
     ):
-        raise SystemExit(
-            "--trace cannot be combined with a forced Lean export"
-        )
+        raise SystemExit("--trace cannot be combined with a forced Lean export")
     if args.rebuild_trace and args.force_lean_export:
         raise SystemExit(
             "--rebuild-trace and --force-lean-export cannot be used together"
@@ -299,7 +312,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.resume and not args.cache:
         args.cache = True
-        print("Resume mode: persistent trace and render checkpoints enabled.", flush=True)
+        print(
+            "Resume mode: persistent trace and render checkpoints enabled.", flush=True
+        )
     root = Path(__file__).resolve().parents[1]
     cache_root = root / ".lean-proof-video-cache"
     try:
@@ -507,13 +522,23 @@ def main(argv: list[str] | None = None) -> int:
         qa_json, qa_html = write_quality_report(output, quality)
         raise SystemExit(f"{error}\nQA reports: {qa_json}, {qa_html}") from error
     qa_json, qa_html = write_quality_report(output, quality)
-    print(f"Quality audit: {qa_json} ({len(quality['warnings'])} warning(s)); {qa_html}")
+    print(
+        f"Quality audit: {qa_json} ({len(quality['warnings'])} warning(s)); {qa_html}"
+    )
     if args.dump_transition_map:
-        from proof_video.diagnostics import build_transition_map
+        from proof_video.diagnostics import (
+            build_transition_map,
+            write_transition_debug_html,
+        )
 
         transition_map_path = args.dump_transition_map.resolve()
-        write_json(transition_map_path, build_transition_map(movie))
-        print(f"Transition map: {transition_map_path}")
+        transition_payload = build_transition_map(movie)
+        transition_json = transition_map_path.with_suffix(".json")
+        write_json(transition_json, transition_payload)
+        transition_html = write_transition_debug_html(
+            transition_map_path, transition_payload, movie.theorem_name
+        )
+        print(f"Transition map: {transition_json}; {transition_html}")
     if args.export_remotion:
         from proof_video.remotion_export import build_remotion_timeline
 
@@ -649,7 +674,9 @@ def main(argv: list[str] | None = None) -> int:
     width, height, profile_fps = QUALITY[args.quality]
     fps = args.fps or profile_fps
     render_mode = args.render_mode
-    if (args.preview or args.preview_seconds is not None or args.preview_tail) and render_mode == "full":
+    if (
+        args.preview or args.preview_seconds is not None or args.preview_tail
+    ) and render_mode == "full":
         render_mode = "segmented"
         print("Preview uses segmented rendering for representative transitions.")
 
@@ -709,6 +736,24 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _deduplicated_path(*values: str) -> str:
+    """Merge PATH fragments without growing the environment on every call."""
+
+    entries: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for raw_entry in value.split(os.pathsep):
+            entry = raw_entry.strip()
+            if not entry:
+                continue
+            normalized = os.path.normcase(os.path.normpath(entry.strip('"')))
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            entries.append(entry)
+    return os.pathsep.join(entries)
+
+
 def _restore_windows_path() -> None:
     """Recover tools installed in user/system PATH without activating PowerShell."""
     if os.name != "nt":
@@ -730,7 +775,7 @@ def _restore_windows_path() -> None:
                 paths.append(os.path.expandvars(value))
     except OSError:
         pass
-    os.environ["PATH"] = os.pathsep.join(path for path in paths if path)
+    os.environ["PATH"] = _deduplicated_path(*paths)
 
 
 if __name__ == "__main__":

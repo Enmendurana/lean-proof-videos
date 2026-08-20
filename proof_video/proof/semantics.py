@@ -20,17 +20,20 @@ from proof_video.proof.schema import (
     SemanticTransitionEdge,
 )
 
+
 def _friendly_local_name(name: str) -> bool:
     """Keep user names, replace inaccessible hygienic/internal names."""
     if not name or name.startswith("_") or "@" in name or "." in name:
         return False
     return all(character.isalnum() or character in "_'" for character in name)
 
+
 def _rename_definition_latex(source: str, original: str, alias: str) -> str:
     escaped = original.replace("_", r"\_")
     if escaped and source.startswith(escaped):
         return alias + source[len(escaped) :]
     return source
+
 
 def _proof_context_line(step: ProofStep, aliases: dict[int, str]) -> tuple[str, int]:
     """Render a local declaration or an already-proved staging premise.
@@ -51,6 +54,7 @@ def _proof_context_line(step: ProofStep, aliases: dict[int, str]) -> tuple[str, 
         line = rf"{name} \;:\; {step.proposition_latex}"
         return line, len(line) - len(step.proposition_latex)
     return step.proposition_latex, 0
+
 
 def _proof_sequent_nodes(
     step: ProofStep,
@@ -78,9 +82,7 @@ def _proof_sequent_nodes(
             # are the very objects consumed by forall/implies introduction.
             # Give them stable binder-owned nodes so ``x : A`` can move into
             # ``forall x : A, ...`` instead of writing a second, unrelated x.
-            name = aliases.get(binder.id, binder.binder_name or "").replace(
-                "_", r"\_"
-            )
+            name = aliases.get(binder.id, binder.binder_name or "").replace("_", r"\_")
             colon_start = line.index(":")
             nodes.extend(
                 (
@@ -172,6 +174,7 @@ def _proof_sequent_nodes(
         )
     return tuple(nodes)
 
+
 def _proof_sequent_latex(
     step: ProofStep,
     context_steps: tuple[ProofStep, ...],
@@ -182,6 +185,7 @@ def _proof_sequent_latex(
         lines.append(_proof_context_line(binder, aliases)[0])
     lines.append(r"\vdash\;" + step.proposition_latex)
     return "\n".join(lines)
+
 
 def _occurrence_edges(
     source_nodes: tuple[SemanticExpressionNode, ...],
@@ -250,6 +254,7 @@ def _occurrence_edges(
             )
     return result
 
+
 def _forall_substitution_occurrences(
     source_nodes: tuple[SemanticExpressionNode, ...],
     target_nodes: tuple[SemanticExpressionNode, ...],
@@ -264,15 +269,13 @@ def _forall_substitution_occurrences(
     must be written as a unit.
     """
 
-    target_by_path: dict[
-        tuple[str | int, ...], list[SemanticExpressionNode]
-    ] = {}
+    target_by_path: dict[tuple[str | int, ...], list[SemanticExpressionNode]] = {}
     for node in target_nodes:
         if node.node_id.startswith("proof-context-"):
             continue
-        target_by_path.setdefault(
-            _path_without_sequent_prefix(node.path), []
-        ).append(node)
+        target_by_path.setdefault(_path_without_sequent_prefix(node.path), []).append(
+            node
+        )
     result: list[tuple[SemanticExpressionNode, SemanticExpressionNode]] = []
     for source in source_nodes:
         if source.kind != "bvar":
@@ -313,11 +316,13 @@ def _forall_substitution_target_paths(
         )
     )
 
+
 def _path_is_inside(
     path: tuple[str | int, ...],
     roots: frozenset[tuple[str | int, ...]],
 ) -> bool:
     return any(len(path) >= len(root) and path[: len(root)] == root for root in roots)
+
 
 def _structural_rule_edges(
     source_nodes: tuple[SemanticExpressionNode, ...],
@@ -327,7 +332,9 @@ def _structural_rule_edges(
     rule: str,
 ) -> list[SemanticTransitionEdge]:
     """Preserve exact occurrences through a rule's AST path transformation."""
-    target_by_path: dict[tuple[tuple[str | int, ...], str], list[SemanticExpressionNode]] = {}
+    target_by_path: dict[
+        tuple[tuple[str | int, ...], str], list[SemanticExpressionNode]
+    ] = {}
     for node in target_nodes:
         target_by_path.setdefault(
             (_path_without_sequent_prefix(node.path), node.kind), []
@@ -408,6 +415,7 @@ def _structural_rule_edges(
         )
     ]
 
+
 def _direct_premise_atom_edges(
     source_nodes: tuple[SemanticExpressionNode, ...],
     target_nodes: tuple[SemanticExpressionNode, ...],
@@ -487,10 +495,15 @@ def _unique_direct_premise_subexpression_edges(
         result: dict[tuple[str, str, str], list[SemanticExpressionNode]] = {}
         for node in nodes:
             rendered = _rendered_expression_key(_node_latex(node, latex))
-            if not node.fingerprint or not rendered or node.kind in {
-                "sequent-punctuation",
-                "declaration-punctuation",
-            }:
+            if (
+                not node.fingerprint
+                or not rendered
+                or node.kind
+                in {
+                    "sequent-punctuation",
+                    "declaration-punctuation",
+                }
+            ):
                 continue
             result.setdefault((node.kind, node.fingerprint, rendered), []).append(node)
         return result
@@ -538,10 +551,7 @@ def _unique_identity_atom_edges(
     for node in target_nodes:
         if node.kind in kinds and node.identity:
             target_groups.setdefault((node.kind, node.identity), []).append(node)
-    existing = {
-        (edge.source_node_id, edge.target_node_id)
-        for edge in existing_edges
-    }
+    existing = {(edge.source_node_id, edge.target_node_id) for edge in existing_edges}
     result = []
     for key in source_groups.keys() & target_groups.keys():
         sources = source_groups[key]
@@ -558,6 +568,7 @@ def _unique_identity_atom_edges(
                 )
             )
     return result
+
 
 def _proof_sequent_transition(
     source_step: ProofStep | None,
@@ -722,8 +733,7 @@ def _proof_sequent_transition(
             shadowed = [
                 binder
                 for binder in source_context
-                if binder.id < alias.id
-                and binder.binder_name == alias.binder_name
+                if binder.id < alias.id and binder.binder_name == alias.binder_name
             ]
             if shadowed:
                 old = max(shadowed, key=lambda binder: binder.id)
@@ -771,9 +781,7 @@ def _proof_sequent_transition(
     # edge with which to instantiate it and consequently writes the entire
     # specialized conclusion from scratch.
     direct_completed_alias_ids = {
-        alias.id
-        for alias in completed_aliases
-        if alias.id in target_step.premises
+        alias.id for alias in completed_aliases if alias.id in target_step.premises
     }
     if source_step.id in target_step.premises or direct_completed_alias_ids:
         structural_sources.append(regular_source)
@@ -796,9 +804,7 @@ def _proof_sequent_transition(
         substitution_target_paths = frozenset(
             path
             for premise_nodes in structural_sources
-            for path in _forall_substitution_target_paths(
-                premise_nodes, regular_target
-            )
+            for path in _forall_substitution_target_paths(premise_nodes, regular_target)
         )
     for premise_nodes in structural_sources:
         structural_edges.extend(
@@ -888,11 +894,7 @@ def _proof_sequent_transition(
                 None,
             )
             target_domain = next(
-                (
-                    node
-                    for node in target_children
-                    if node.path == (*outer.path, "0")
-                ),
+                (node for node in target_children if node.path == (*outer.path, "0")),
                 None,
             )
             source_binder = source_by_id.get(f"{source_prefix}/binder")
@@ -937,8 +939,7 @@ def _proof_sequent_transition(
         added_binders = [
             binder
             for binder in target_context
-            if binder.kind == "eigenvariable"
-            and binder.id not in source_context_ids
+            if binder.kind == "eigenvariable" and binder.id not in source_context_ids
         ]
         outer_foralls = [
             node
@@ -965,11 +966,7 @@ def _proof_sequent_transition(
                 None,
             )
             source_domain = next(
-                (
-                    node
-                    for node in source_children
-                    if node.path == (*outer.path, "0")
-                ),
+                (node for node in source_children if node.path == (*outer.path, "0")),
                 None,
             )
             target_binder = target_by_id.get(f"{target_prefix}/binder")
@@ -980,9 +977,7 @@ def _proof_sequent_transition(
                 if node.node_id.startswith(target_prefix + "/")
                 and node.path == ("context", added.id, "0")
             ]
-            target_domain = (
-                target_domains[0] if len(target_domains) == 1 else None
-            )
+            target_domain = target_domains[0] if len(target_domains) == 1 else None
             for old, new in (
                 (source_binder, target_binder),
                 (source_colon, target_colon),
@@ -1063,10 +1058,7 @@ def _proof_sequent_transition(
     copy_candidates = []
     for source, reason in premise_sources:
         for target in conclusion_targets:
-            if (
-                not source.fingerprint
-                or source.fingerprint != target.fingerprint
-            ):
+            if not source.fingerprint or source.fingerprint != target.fingerprint:
                 continue
             # A premise-transfer edge owns a physical piece of chalk, so the
             # rendered subexpression must also be unchanged. Definitional
@@ -1075,12 +1067,8 @@ def _proof_sequent_transition(
             # mismatched root suppresses the exact child ``P`` and forces the
             # renderer to rewrite everything. Skip the wrapper here; the
             # maximal exact descendant remains eligible below.
-            source_text = _rendered_expression_key(
-                _node_latex(source, source_sequent)
-            )
-            target_text = _rendered_expression_key(
-                _node_latex(target, target_sequent)
-            )
+            source_text = _rendered_expression_key(_node_latex(source, source_sequent))
+            target_text = _rendered_expression_key(_node_latex(target, target_sequent))
             if not source_text or source_text != target_text:
                 continue
             copy_candidates.append(
@@ -1097,9 +1085,7 @@ def _proof_sequent_transition(
     # disjoint parts from several rows at once and choose a direct previous
     # occurrence over an older equal-looking copy.  Selecting a source here
     # would silently reintroduce the former one-row limitation.
-    target_candidates: dict[
-        str, list[tuple[int, int, str, str, str]]
-    ] = {}
+    target_candidates: dict[str, list[tuple[int, int, str, str, str]]] = {}
     for candidate in copy_candidates:
         target_candidates.setdefault(candidate[3], []).append(candidate)
     copied_target_nodes: list[SemanticExpressionNode] = []
@@ -1121,9 +1107,7 @@ def _proof_sequent_transition(
         for _target_extent, _source_extent, source_id, _, reason in sorted(
             target_candidates[target_id], reverse=True
         ):
-            edges.append(
-                SemanticTransitionEdge(source_id, target_id, reason, 1.0)
-            )
+            edges.append(SemanticTransitionEdge(source_id, target_id, reason, 1.0))
         copied_target_nodes.append(target_node)
         used_target.add(target_id)
 
@@ -1142,9 +1126,7 @@ def _proof_sequent_transition(
             )
         )
 
-    edges.extend(
-        _unique_identity_atom_edges(source_nodes, target_nodes, tuple(edges))
-    )
+    edges.extend(_unique_identity_atom_edges(source_nodes, target_nodes, tuple(edges)))
 
     return SemanticTransition(
         source=SemanticExpression(source_nodes),

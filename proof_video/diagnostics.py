@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 from collections import Counter
+from html import escape
+import json
+from pathlib import Path
 from typing import Any
 
+from proof_video.cache import write_json
 from proof_video.latex import parse_goal_state
 from proof_video.models import Goal, IndexMaps, Movie, SemanticTransition
+from proof_video.presentation.debug import build_canonical_transition_debug
+from proof_video.presentation.rows import context_presentation_rows
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 BLOCK_SIMILARITY_THRESHOLD = 0.35
 _LEANTEX_FALLBACK_MARKER = r"\operatorname{Lean}\left[\text{"
 
@@ -15,16 +21,13 @@ _LEANTEX_FALLBACK_MARKER = r"\operatorname{Lean}\left[\text{"
 def build_transition_map(movie: Movie) -> dict[str, Any]:
     """Describe the semantic identities that the renderer can preserve.
 
-    This intentionally follows ``ProofScene``'s visible timeline: duplicate
-    semantic states are removed and only the first focused goal is rendered.
-    Legacy glyph-shape matching happens inside Manim and therefore cannot
-    provide deterministic character edges in this pre-render diagnostic.
+    This intentionally follows the renderers' semantic timeline: duplicate
+    states are removed, the canonical section covers the whole live goal
+    forest, and the old block report retains its first-focus projection only
+    for ABI 1--4 compatibility. Legacy glyph-shape matching happens inside
+    Manim and therefore cannot provide deterministic character edges here.
     """
-    frames = tuple(
-        frame
-        for frame in movie.semantic_frames()
-        if frame.display_goals
-    )
+    frames = tuple(frame for frame in movie.semantic_frames() if frame.display_goals)
     transitions = [
         _transition(source, target)
         for source, target in zip(frames, frames[1:], strict=False)
@@ -34,12 +37,14 @@ def build_transition_map(movie: Movie) -> dict[str, Any]:
         for transition in transitions
         for block in transition["blocks"]
     )
+    canonical = [item["canonical"] for item in transitions]
     return {
         "schemaVersion": SCHEMA_VERSION,
         "theorem": movie.theorem_name,
         "scope": {
             "timeline": "semantic_frames",
-            "goals": "first_focused_goal",
+            "canonicalGoals": "all_live_goals",
+            "legacyBlockProjection": "first_focused_goal",
             "blockSimilarityThreshold": BLOCK_SIMILARITY_THRESHOLD,
         },
         "summary": {
@@ -49,9 +54,74 @@ def build_transition_map(movie: Movie) -> dict[str, Any]:
             "legacyShapeFallbacks": modes["legacy_shape_fallback"],
             "writtenBlocks": modes["write"],
             "removedBlocks": modes["fade"],
+            "canonicalTransitions": sum(
+                bool(item.get("available")) for item in canonical
+            ),
+            "validCanonicalTransitions": sum(
+                bool(item.get("validation", {}).get("valid")) for item in canonical
+            ),
+            "canonicalFallbacks": sum(
+                bool(item.get("presentation", {}).get("fallback", {}).get("used"))
+                for item in canonical
+            ),
         },
         "transitions": transitions,
     }
+
+
+def write_transition_debug(path: Path, movie: Movie) -> tuple[Path, Path]:
+    """Write the complete transition map and a standalone human viewer."""
+
+    json_path = path.with_suffix(".json")
+    payload = build_transition_map(movie)
+    write_json(json_path, payload)
+    html_path = write_transition_debug_html(path, payload, movie.theorem_name)
+    return json_path, html_path
+
+
+def write_transition_debug_html(
+    path: Path, payload: dict[str, Any], theorem_name: str
+) -> Path:
+    """Write a standalone viewer for an already serialized transition map."""
+
+    html_path = path.with_suffix(".html")
+
+    sections: list[str] = []
+    for index, transition in enumerate(payload["transitions"], start=1):
+        canonical = transition["canonical"]
+        valid = canonical.get("validation", {}).get("valid", False)
+        fallback = (
+            canonical.get("presentation", {}).get("fallback", {}).get("used", False)
+        )
+        css_class = "bad" if not valid else ("warn" if fallback else "ok")
+        label = (
+            f"{index}. frame {transition['fromFrame']}→{transition['toFrame']} · "
+            f"{transition['tactic'] or '(unlabelled action)'}"
+        )
+        pretty = escape(json.dumps(transition, indent=2, ensure_ascii=False))
+        sections.append(
+            f"<details class='{css_class}'><summary>{escape(label)}</summary>"
+            f"<pre>{pretty}</pre></details>"
+        )
+
+    summary = escape(json.dumps(payload["summary"], indent=2, ensure_ascii=False))
+    html_path.write_text(
+        "<!doctype html><meta charset='utf-8'>"
+        f"<title>Canonical transition debug · {escape(theorem_name)}</title>"
+        "<style>body{font:15px system-ui;max-width:1500px;margin:2rem auto;"
+        "padding:0 1rem;background:#090b12;color:#eef1f8}"
+        "details{margin:.5rem 0;border-left:5px solid #8792aa;padding:.5rem 1rem;"
+        "background:#121827}details.ok{border-color:#72f59a}"
+        "details.warn{border-color:#ffd166}details.bad{border-color:#ff7777}"
+        "summary{cursor:pointer;font-weight:650}pre{white-space:pre-wrap;"
+        "overflow-wrap:anywhere;color:#dce3f5}</style>"
+        f"<h1>{escape(theorem_name)}</h1><p>Canonical ABI transition audit. "
+        "Green entries replay exactly; amber entries use an explicit visual fallback; "
+        "red entries failed validation.</p>"
+        f"<pre>{summary}</pre>{''.join(sections)}",
+        encoding="utf-8",
+    )
+    return html_path
 
 
 def _transition(source_frame, target_frame) -> dict[str, Any]:
@@ -81,6 +151,22 @@ def _transition(source_frame, target_frame) -> dict[str, Any]:
         "toFrame": target_frame.index,
         "tactic": target_frame.tactic,
         "blocks": blocks,
+        "canonical": _canonical_transition(source_frame, target_frame),
+    }
+
+
+def _canonical_transition(source_frame, target_frame) -> dict[str, Any]:
+    before = source_frame.proof_state
+    after = target_frame.proof_state
+    transition = target_frame.proof_transition
+    if before is None or after is None or transition is None:
+        return {
+            "available": False,
+            "fallbackReason": "canonical state or transition is missing",
+        }
+    return {
+        "available": True,
+        **build_canonical_transition_debug(before, after, transition),
     }
 
 
@@ -222,10 +308,11 @@ def _legacy_character_mapping(index_maps: IndexMaps) -> dict[str, Any]:
 
 
 def _goal_ref(goal: Goal) -> dict[str, Any]:
-    latex_parts = [hypothesis.latex for hypothesis in goal.latex_context]
+    presentation_rows = context_presentation_rows(goal)
+    latex_parts = [row.latex for row in presentation_rows]
     if goal.latex_target is not None:
         latex_parts.append(goal.latex_target)
-    if not goal.latex_target and not goal.latex_context:
+    if not goal.latex_target and not presentation_rows:
         notation_source = "legacy_lean_state"
     elif any(_LEANTEX_FALLBACK_MARKER in part for part in latex_parts):
         notation_source = "semantic_latex_with_legacy_expression_fallback"
@@ -248,15 +335,12 @@ def _block_similarity(source: Goal, target: Goal) -> float:
 
 
 def _row_keys(goal: Goal) -> set[str]:
-    if goal.latex_context:
-        context_keys = {
-            f"hyp-{hypothesis.name}"
-            for hypothesis in goal.latex_context
-        }
+    presentation_rows = context_presentation_rows(goal)
+    if presentation_rows or goal.canonical_target is not None:
+        context_keys = {f"hyp-{row.stable_key}" for row in presentation_rows}
     else:
         state = parse_goal_state(goal.state)
         context_keys = {
-            f"hyp-context-{index}"
-            for index, _context in enumerate(state.context)
+            f"hyp-context-{index}" for index, _context in enumerate(state.context)
         }
     return {*context_keys, "target"}

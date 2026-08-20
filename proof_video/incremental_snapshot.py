@@ -109,7 +109,9 @@ def _dependency_rows(
         }
         previous = prior.get(str(path))
         stat_keys = ("size", "mtimeNs", "ctimeNs", "device", "inode")
-        if previous is not None and all(previous.get(key) == row[key] for key in stat_keys):
+        if previous is not None and all(
+            previous.get(key) == row[key] for key in stat_keys
+        ):
             row["sha256"] = str(previous.get("sha256", ""))
         else:
             row["sha256"] = file_sha256(path)
@@ -254,7 +256,11 @@ def validate_snapshot(
         return SnapshotValidation(False, "snapshot-hash-mismatch", metadata)
     if file_sha256(deps) != metadata.get("depsSha256"):
         return SnapshotValidation(False, "deps-hash-mismatch", metadata)
-    status = "snapshot-hit" if identity.get("sourceSha256") == current["sourceSha256"] else "partial-reuse"
+    status = (
+        "snapshot-hit"
+        if identity.get("sourceSha256") == current["sourceSha256"]
+        else "partial-reuse"
+    )
     return SnapshotValidation(True, status, metadata)
 
 
@@ -288,14 +294,19 @@ def run_incremental_lean(
     header_temporary = None
     if header_snapshot is not None:
         header_snapshot.parent.mkdir(parents=True, exist_ok=True)
-        header_temporary = header_snapshot.with_suffix(header_snapshot.suffix + ".writing")
+        header_temporary = header_snapshot.with_suffix(
+            header_snapshot.suffix + ".writing"
+        )
         header_temporary.unlink(missing_ok=True)
         snapshot_deps_path(header_temporary).unlink(missing_ok=True)
         command.extend(("--incr-header-save", str(header_temporary.resolve())))
     command.extend(extra_args)
     command.append(str(source.resolve()))
     started = time.monotonic()
-    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+    with (
+        tempfile.TemporaryFile() as stdout_file,
+        tempfile.TemporaryFile() as stderr_file,
+    ):
         process = subprocess.Popen(
             command,
             cwd=workspace,

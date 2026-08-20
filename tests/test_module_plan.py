@@ -51,7 +51,9 @@ def test_module_units_resume_independently_and_merge_in_order(
     first = tmp_path / "First.lean"
     final = tmp_path / "Final.lean"
     first.write_text("theorem first : True := by trivial\n", encoding="utf-8")
-    final.write_text("import First\ntheorem final : True := by trivial\n", encoding="utf-8")
+    final.write_text(
+        "import First\ntheorem final : True := by trivial\n", encoding="utf-8"
+    )
     write_json(
         final.with_suffix(".proof-video.json"),
         {

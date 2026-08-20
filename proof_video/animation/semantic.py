@@ -7,21 +7,112 @@ a globally consistent token transition plan consumed by both renderers.
 from __future__ import annotations
 
 from bisect import bisect_right
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from proof_video.proof.schema import SemanticTransition
+from proof_video.presentation.model import SemanticVisualPlan, VisualPrimitiveKind
+from proof_video.proof.correspondence import EntityKind
+from proof_video.proof.schema import (
+    SemanticExpression,
+    SemanticTransition,
+    SemanticTransitionEdge,
+    has_native_canonical_observation,
+)
 from proof_video.transition_plan import (
     TokenPair,
     TransitionCandidate,
+    TransitionPlan,
     TransitionRole,
     solve_transition_plan,
 )
 
-STABLE_STRUCTURAL_TOKENS = frozenset({":", r"\vdash"})
-STRUCTURAL_SHELL_REASONS = frozenset({
-    "verified-structural-shell",
-    "verified-premise-branch-shell",
-})
+STRUCTURAL_SHELL_REASONS = frozenset(
+    {
+        "verified-structural-shell",
+        "verified-premise-branch-shell",
+    }
+)
+
+
+_VISUAL_RELATION = {
+    VisualPrimitiveKind.KEEP: "preserve",
+    VisualPrimitiveKind.MOVE: "preserve",
+    VisualPrimitiveKind.COPY: "copy",
+    VisualPrimitiveKind.REWRITE: "rewrite",
+    VisualPrimitiveKind.SPLIT: "split",
+    VisualPrimitiveKind.MERGE: "merge",
+}
+
+
+@dataclass(frozen=True)
+class RendererTransitionSource:
+    """One goal card participating in a renderer transition.
+
+    Token indices and semantic spans are local to this card.  The shared
+    compiler below assigns deterministic global offsets; renderers therefore
+    never have to guess which same-looking parent supplied a target glyph.
+    """
+
+    goal_id: str
+    token_spans: tuple[tuple[int, int], ...]
+    token_texts: tuple[str, ...]
+    expression: SemanticExpression
+
+
+def visual_source_goal_ids(
+    visual_plan: SemanticVisualPlan | None,
+    target_goal_id: str,
+) -> tuple[str, ...]:
+    """Return every certified source goal connected to ``target_goal_id``.
+
+    Ordering follows the immutable visual plan.  This is goal-card routing,
+    not token matching: text, geometry and tactic names never participate.
+    """
+
+    if visual_plan is None:
+        return ()
+    anchors = {item.anchor_id: item for item in visual_plan.anchors}
+    result: list[str] = []
+    for primitive in visual_plan.primitives:
+        if primitive.used_fallback or primitive.kind not in {
+            VisualPrimitiveKind.KEEP,
+            VisualPrimitiveKind.MOVE,
+            VisualPrimitiveKind.COPY,
+            VisualPrimitiveKind.REWRITE,
+            VisualPrimitiveKind.SPLIT,
+            VisualPrimitiveKind.MERGE,
+        }:
+            continue
+        targets_goal = any(
+            anchor_id in anchors and anchors[anchor_id].entity.goal_id == target_goal_id
+            for anchor_id in primitive.target_anchor_ids
+        )
+        if not targets_goal:
+            continue
+        result.extend(
+            anchors[anchor_id].entity.goal_id
+            for anchor_id in primitive.source_anchor_ids
+            if anchor_id in anchors and anchors[anchor_id].entity.goal_id
+        )
+    return tuple(dict.fromkeys(result))
+
+
+def authoritative_frame_visual_plan(frame) -> SemanticVisualPlan | None:
+    """Return a plan only when it came from a native canonical observation.
+
+    ABI 1--4 traces are upgraded in memory with best-effort states so existing
+    tools can inspect them.  Their renderer correspondence, however, may have
+    occurrence paths that cannot be resolved by the new canonical anchors.
+    They deliberately stay on the legacy compatibility bridge.  ABI 5 states
+    have ``legacyState=false`` and use the canonical plan exclusively.
+    """
+
+    visual_plan = getattr(frame, "visual_plan", None)
+    state = getattr(frame, "proof_state", None)
+    if visual_plan is None or state is None:
+        return None
+    if not has_native_canonical_observation(frame):
+        return None
+    return visual_plan
 
 
 @dataclass(frozen=True)
@@ -56,9 +147,11 @@ class _TokenSpanIndex:
                 matches.add(index)
         return sorted(matches)
 
+
 def _row_base_key(key: str) -> str:
     """Remove only a generated line-wrap suffix from a semantic row key."""
     return key.rsplit(":", 1)[0]
+
 
 def _is_symbolic_latex_token(token: str) -> bool:
     """Whether a rendered token is mathematical syntax, not an identifier."""
@@ -66,17 +159,20 @@ def _is_symbolic_latex_token(token: str) -> bool:
         return False
     # Grouped commands render names, types, numerals or textual constants as
     # one token. Their identity must continue to come from expression nodes.
-    if token.startswith((
-        r"\mathbb{",
-        r"\mathbf{",
-        r"\mathrm{",
-        r"\text{",
-        r"\operatorname{",
-    )):
+    if token.startswith(
+        (
+            r"\mathbb{",
+            r"\mathbf{",
+            r"\mathrm{",
+            r"\text{",
+            r"\operatorname{",
+        )
+    ):
         return False
     if all(character.isalnum() or character in "_'" for character in token):
         return False
     return True
+
 
 def _supplement_logically_stable_syntax_pairs(
     semantic_pairs,
@@ -130,12 +226,12 @@ def _supplement_logically_stable_syntax_pairs(
         target_node = target_nodes.get(edge.target_node_id)
         if source_node is None or target_node is None:
             continue
-        covered_source = set(_tokens_in_semantic_spans(
-            source_spans, source_node.latex_spans
-        ))
-        covered_target = set(_tokens_in_semantic_spans(
-            target_spans, target_node.latex_spans
-        ))
+        covered_source = set(
+            _tokens_in_semantic_spans(source_spans, source_node.latex_spans)
+        )
+        covered_target = set(
+            _tokens_in_semantic_spans(target_spans, target_node.latex_spans)
+        )
         for pair in candidates:
             if pair[0] in covered_source and pair[1] in covered_target:
                 logically_connected.add(pair)
@@ -147,6 +243,7 @@ def _supplement_logically_stable_syntax_pairs(
         used_target.add(target_index)
         result.append((source_index, target_index))
     return result
+
 
 def _collect_row_token_data(rows):
     """Flatten rendered rows while retaining each token's semantic row."""
@@ -169,15 +266,12 @@ def _collect_row_token_data(rows):
         global_spans.extend(
             (row_span[0] + start, row_span[0] + end) for start, end in spans
         )
-        row_key = _row_base_key(
-            getattr(row, "proof_row_key", f"row-{row_index}")
-        )
-        structural_positions.extend(
-            (row_key, start, end) for start, end in spans
-        )
+        row_key = _row_base_key(getattr(row, "proof_row_key", f"row-{row_index}"))
+        structural_positions.extend((row_key, start, end) for start, end in spans)
         token_texts.extend(row_token_texts)
         tokens.extend(row_tokens)
     return global_spans, structural_positions, token_texts, tokens
+
 
 def _stable_visual_rows(source_block, target_block):
     """Rows that are provably identical by block key, row key and LaTeX."""
@@ -209,10 +303,15 @@ def _stable_visual_rows(source_block, target_block):
                 stable.append(source)
     return stable
 
+
 def _semantic_mapped_target_row_bases(
     source_rows,
     target_rows,
-    semantic_transition: SemanticTransition,
+    semantic_transition: SemanticTransition | None,
+    visual_plan: SemanticVisualPlan | None = None,
+    *,
+    source_goal_id: str = "",
+    target_goal_id: str = "",
 ) -> set[str]:
     """Return new target rows reached by an actual semantic token edge."""
     source_data = _collect_row_token_data(source_rows)
@@ -227,58 +326,57 @@ def _semantic_mapped_target_row_bases(
         target_global,
         target_texts,
         semantic_transition,
+        visual_plan,
+        source_goal_id=source_goal_id,
+        target_goal_id=target_goal_id,
     )
     if not pairs:
         return set()
+    return {target_positions[target_index][0] for _source_index, target_index in pairs}
+
+
+def semantic_mapped_target_row_bases_from_sources(
+    source_groups,
+    target_rows,
+    semantic_transition: SemanticTransition | None,
+    visual_plan: SemanticVisualPlan | None,
+    *,
+    target_goal_id: str,
+) -> set[str]:
+    """Return target rows reached from any certified source goal card."""
+
+    target_data = _collect_row_token_data(target_rows)
+    if target_data is None:
+        return set()
+    target_global, target_positions, target_texts, _target_tokens = target_data
+    renderer_sources: list[RendererTransitionSource] = []
+    for goal_id, rows, expression in source_groups:
+        source_data = _collect_row_token_data(rows)
+        if source_data is None:
+            return set()
+        source_global, _positions, source_texts, _tokens = source_data
+        renderer_sources.append(
+            RendererTransitionSource(
+                goal_id=goal_id,
+                token_spans=tuple(source_global),
+                token_texts=tuple(source_texts),
+                expression=expression,
+            )
+        )
+    plan = compile_renderer_transition_plan_from_sources(
+        tuple(renderer_sources),
+        target_global,
+        target_texts,
+        semantic_transition,
+        visual_plan,
+        target_goal_id=target_goal_id,
+    )
+    if plan is None or not plan.valid:
+        return set()
     return {
-        target_positions[target_index][0]
-        for _source_index, target_index in pairs
+        target_positions[target_index][0] for _source_index, target_index in plan.pairs
     }
 
-def _supplement_stable_structural_pairs(
-    semantic_pairs,
-    source_positions,
-    source_token_texts,
-    target_positions,
-    target_token_texts,
-):
-    """Keep unchanged board punctuation without inventing expression identity.
-
-    Lean expression nodes do not include the colon inserted between a local
-    hypothesis name and its type.  Such punctuation may persist only when its
-    token text, semantic row key, and exact row-local character span all agree.
-    This deliberately cannot move a colon to another row or another position.
-    """
-    result = list(semantic_pairs)
-    used_source = {source_index for source_index, _target_index in result}
-    used_target = {target_index for _source_index, target_index in result}
-
-    source_by_identity: dict[tuple, list[int]] = {}
-    target_by_identity: dict[tuple, list[int]] = {}
-    for index, (position, token_text) in enumerate(
-        zip(source_positions, source_token_texts, strict=True)
-    ):
-        if token_text in STABLE_STRUCTURAL_TOKENS:
-            source_by_identity.setdefault((*position, token_text), []).append(index)
-    for index, (position, token_text) in enumerate(
-        zip(target_positions, target_token_texts, strict=True)
-    ):
-        if token_text in STABLE_STRUCTURAL_TOKENS:
-            target_by_identity.setdefault((*position, token_text), []).append(index)
-
-    for identity in source_by_identity.keys() & target_by_identity.keys():
-        source_candidates = source_by_identity[identity]
-        target_candidates = target_by_identity[identity]
-        if len(source_candidates) != 1 or len(target_candidates) != 1:
-            continue
-        source_index = source_candidates[0]
-        target_index = target_candidates[0]
-        if source_index in used_source or target_index in used_target:
-            continue
-        used_source.add(source_index)
-        used_target.add(target_index)
-        result.append((source_index, target_index))
-    return result
 
 def _semantic_token_pairs(
     source_token_spans,
@@ -286,6 +384,10 @@ def _semantic_token_pairs(
     target_token_spans,
     target_token_texts,
     transition: SemanticTransition | None,
+    visual_plan: SemanticVisualPlan | None = None,
+    *,
+    source_goal_id: str = "",
+    target_goal_id: str = "",
 ) -> list[tuple[int, int]] | None:
     """Compile Lean edges into a globally validated strict token plan.
 
@@ -294,14 +396,314 @@ def _semantic_token_pairs(
     physical moves; every unresolved target token is deliberately written as
     new by ``_phased_token_transition``.
     """
-    plan = _semantic_transition_plan(
+    plan = compile_renderer_transition_plan(
         source_token_spans,
         source_token_texts,
         target_token_spans,
         target_token_texts,
         transition,
+        visual_plan,
+        source_goal_id=source_goal_id,
+        target_goal_id=target_goal_id,
     )
-    return list(plan.pairs) if plan is not None and plan.valid else ([] if transition is not None else None)
+    return (
+        list(plan.pairs)
+        if plan is not None and plan.valid
+        else ([] if transition is not None else None)
+    )
+
+
+def visual_primitive_payload(
+    visual_plan: SemanticVisualPlan | None,
+) -> list[dict[str, object]]:
+    """Serialize renderer-neutral control primitives without adding semantics.
+
+    Token geometry is deliberately absent.  Remotion may use this payload for
+    goal split/focus/layout effects, while Manim reads the same primitive kinds
+    before pairing blocks.  The source remains the immutable canonical plan.
+    """
+
+    if visual_plan is None:
+        return []
+    anchors = {item.anchor_id: item for item in visual_plan.anchors}
+    return [
+        {
+            "id": primitive.primitive_id,
+            "kind": primitive.kind.value,
+            "sourceAnchors": list(primitive.source_anchor_ids),
+            "targetAnchors": list(primitive.target_anchor_ids),
+            "sourceSlots": [
+                list(anchors[item].slot)
+                for item in primitive.source_anchor_ids
+                if item in anchors
+            ],
+            "targetSlots": [
+                list(anchors[item].slot)
+                for item in primitive.target_anchor_ids
+                if item in anchors
+            ],
+            "persistentIds": list(primitive.persistent_ids),
+            "scope": primitive.scope,
+            "fallback": primitive.fallback_reason,
+        }
+        for primitive in visual_plan.primitives
+    ]
+
+
+def _entity_node_ids(entity, nodes) -> tuple[str, ...]:
+    """Resolve a canonical layout entity to observed renderer-span nodes."""
+
+    if entity.kind is EntityKind.OCCURRENCE:
+        return (entity.occurrence_id,)
+    if entity.kind is EntityKind.LOCAL:
+        prefix = f"context/{entity.local_id}/"
+        matches = tuple(
+            node.node_id
+            for node in nodes
+            if node.kind == "declaration"
+            and (
+                node.identity == f"fvar:{entity.local_id}"
+                or node.node_id.startswith(prefix)
+            )
+        )
+        return matches[:1]
+    if entity.kind in {EntityKind.LOCAL_TYPE, EntityKind.LOCAL_VALUE}:
+        prefix = (
+            f"context/{entity.local_id}"
+            if entity.kind is EntityKind.LOCAL_TYPE
+            else f"local/{entity.local_id}/value"
+        )
+        candidates = tuple(
+            node
+            for node in nodes
+            if node.node_id == prefix or node.node_id.startswith(prefix + "/")
+            if node.kind not in {"declaration", "declaration-punctuation"}
+        )
+        roots = tuple(node.node_id for node in candidates if node.parent_id is None)
+        return roots[:1] or tuple(node.node_id for node in candidates[:1])
+    if entity.kind is EntityKind.TARGET:
+        candidates = tuple(
+            node
+            for node in nodes
+            if not node.path or node.path[0] != "context"
+            if node.kind != "sequent-punctuation"
+        )
+        roots = tuple(node.node_id for node in candidates if node.parent_id is None)
+        return roots[:1] or tuple(node.node_id for node in candidates[:1])
+    return ()
+
+
+def _visual_plan_edges(
+    visual_plan: SemanticVisualPlan,
+    transition: SemanticTransition,
+    *,
+    source_goal_id: str = "",
+    target_goal_id: str = "",
+) -> tuple[SemanticTransitionEdge, ...]:
+    """Expand occurrence hyperedges only at the renderer-token boundary.
+
+    The expansion is mechanical: no tactic text, glyph equality or geometry
+    participates.  Non-occurrence controls (goal split/close/focus and row
+    reorder) remain in :func:`visual_primitive_payload` and never manufacture
+    token identity.  Diagnostic fallback primitives are likewise ineligible
+    for physical movement.
+    """
+
+    anchors = {item.anchor_id: item for item in visual_plan.anchors}
+    source_nodes = transition.source.nodes
+    target_nodes = transition.target.nodes
+    edges: list[SemanticTransitionEdge] = []
+    for primitive in visual_plan.primitives:
+        relation = _VISUAL_RELATION.get(primitive.kind)
+        if relation is None or primitive.used_fallback:
+            continue
+        source_entities = tuple(
+            anchors[item].entity
+            for item in primitive.source_anchor_ids
+            if item in anchors
+            and (not source_goal_id or anchors[item].entity.goal_id == source_goal_id)
+        )
+        target_entities = tuple(
+            anchors[item].entity
+            for item in primitive.target_anchor_ids
+            if item in anchors
+            and (not target_goal_id or anchors[item].entity.goal_id == target_goal_id)
+        )
+        sources = tuple(
+            node_id
+            for entity in source_entities
+            for node_id in _entity_node_ids(entity, source_nodes)
+        )
+        targets = tuple(
+            node_id
+            for entity in target_entities
+            for node_id in _entity_node_ids(entity, target_nodes)
+        )
+        if not sources or not targets:
+            continue
+        reason = next(
+            (item for item in primitive.evidence if item.startswith("verified-")),
+            f"verified-canonical-{primitive.kind.value}",
+        )
+        for source in sources:
+            for target in targets:
+                edges.append(
+                    SemanticTransitionEdge(
+                        source_node_id=source,
+                        target_node_id=target,
+                        reason=reason,
+                        confidence=primitive.confidence,
+                        relation=relation,
+                        provenance="canonical-visual-plan",
+                    )
+                )
+    return tuple(edges)
+
+
+def compile_renderer_transition_plan(
+    source_token_spans,
+    source_token_texts,
+    target_token_spans,
+    target_token_texts,
+    transition: SemanticTransition | None,
+    visual_plan: SemanticVisualPlan | None = None,
+    *,
+    source_goal_id: str = "",
+    target_goal_id: str = "",
+):
+    """Compile the one authoritative visual plan for either renderer.
+
+    ``SemanticTransition`` supplies occurrence spans for old SVG/KaTeX token
+    layouts.  When ``visual_plan`` exists, its primitives completely replace
+    the transition's legacy edge list; a conflicting old edge can therefore
+    never steer a glyph.  Traces predating canonical states retain the narrow
+    compatibility path through their original semantic edges.
+    """
+
+    if visual_plan is None:
+        return _semantic_transition_plan(
+            source_token_spans,
+            source_token_texts,
+            target_token_spans,
+            target_token_texts,
+            transition,
+        )
+    if transition is None:
+        return solve_transition_plan(
+            len(source_token_texts), len(target_token_texts), ()
+        )
+    canonical_transition = SemanticTransition(
+        source=transition.source,
+        target=transition.target,
+        edges=_visual_plan_edges(
+            visual_plan,
+            transition,
+            source_goal_id=source_goal_id,
+            target_goal_id=target_goal_id,
+        ),
+        proof_kind=transition.proof_kind,
+        adapter="canonical-visual-plan",
+        proof_fingerprint=transition.proof_fingerprint,
+        proof_term=transition.proof_term,
+        proof_descendants=transition.proof_descendants,
+        proof_premises=transition.proof_premises,
+        proof_constants=transition.proof_constants,
+        goal_diff=transition.goal_diff,
+        fallback_reason=transition.fallback_reason,
+    )
+    return _semantic_transition_plan(
+        source_token_spans,
+        source_token_texts,
+        target_token_spans,
+        target_token_texts,
+        canonical_transition,
+    )
+
+
+def compile_renderer_transition_plan_from_sources(
+    sources: tuple[RendererTransitionSource, ...],
+    target_token_spans,
+    target_token_texts,
+    transition: SemanticTransition | None,
+    visual_plan: SemanticVisualPlan | None,
+    *,
+    target_goal_id: str,
+) -> TransitionPlan | None:
+    """Compile one global token plan from every certified parent goal card.
+
+    A canonical goal merge is an n→1 hyperedge.  Each source expression still
+    has card-local LaTeX coordinates, so compiling a concatenated expression
+    would make equal offsets from different cards ambiguous.  Instead, this
+    function compiles each source in its own coordinate space, shifts its
+    selected candidates into one global source-token space, and invokes the
+    same global solver once across all parents.
+
+    The function intentionally accepts only explicit semantic expressions and
+    visual-plan goal identities.  It performs no rendered-text, geometry,
+    tactic-name, or theorem-specific source selection.
+    """
+
+    if not sources:
+        return None
+    if visual_plan is None:
+        if len(sources) != 1:
+            return None
+        source = sources[0]
+        return compile_renderer_transition_plan(
+            source.token_spans,
+            source.token_texts,
+            target_token_spans,
+            target_token_texts,
+            transition,
+            None,
+            source_goal_id=source.goal_id,
+            target_goal_id=target_goal_id,
+        )
+    if transition is None:
+        return solve_transition_plan(
+            sum(len(source.token_texts) for source in sources),
+            len(target_token_texts),
+            (),
+        )
+
+    candidates: list[TransitionCandidate] = []
+    source_offset = 0
+    for source in sources:
+        local_transition = replace(transition, source=source.expression)
+        local_plan = compile_renderer_transition_plan(
+            source.token_spans,
+            source.token_texts,
+            target_token_spans,
+            target_token_texts,
+            local_transition,
+            visual_plan,
+            source_goal_id=source.goal_id,
+            target_goal_id=target_goal_id,
+        )
+        if local_plan is not None and local_plan.valid:
+            candidates.extend(
+                replace(
+                    candidate,
+                    candidate_id=(
+                        f"{source.goal_id}->{target_goal_id}:{candidate.candidate_id}"
+                    ),
+                    source_node_id=f"{source.goal_id}/{candidate.source_node_id}",
+                    target_node_id=f"{target_goal_id}/{candidate.target_node_id}",
+                    pairs=tuple(
+                        TokenPair(pair.source + source_offset, pair.target)
+                        for pair in candidate.pairs
+                    ),
+                )
+                for candidate in local_plan.selected
+            )
+        source_offset += len(source.token_texts)
+
+    return solve_transition_plan(
+        source_offset,
+        len(target_token_texts),
+        tuple(candidates),
+    )
+
 
 def _semantic_transition_plan(
     source_token_spans,
@@ -313,8 +715,12 @@ def _semantic_transition_plan(
     """Return the audited plan so non-Manim renderers use identical logic."""
     if transition is None:
         return None
-    source_nodes = {node.node_id: node for node in transition.source.nodes if node.node_id}
-    target_nodes = {node.node_id: node for node in transition.target.nodes if node.node_id}
+    source_nodes = {
+        node.node_id: node for node in transition.source.nodes if node.node_id
+    }
+    target_nodes = {
+        node.node_id: node for node in transition.target.nodes if node.node_id
+    }
     if not source_nodes or not target_nodes or not transition.edges:
         return solve_transition_plan(
             len(source_token_texts), len(target_token_texts), ()
@@ -376,9 +782,11 @@ def _semantic_transition_plan(
             balanced_indices(child, span_index, token_texts)
             for child in direct_children
         ]
-        has_atomic_function_head = any(
-            group == [ordered_owned[0]] for group in child_token_groups
-        ) if ordered_owned else False
+        has_atomic_function_head = (
+            any(group == [ordered_owned[0]] for group in child_token_groups)
+            if ordered_owned
+            else False
+        )
         if (
             node.kind == "app"
             and len(ordered_owned) >= 2
@@ -425,18 +833,14 @@ def _semantic_transition_plan(
             continue
         source_sequence = [source_token_texts[index] for index in source_indices]
         target_sequence = [target_token_texts[index] for index in target_indices]
-        exact_composite = (
-            len(source_indices) > 1
-            and source_sequence == target_sequence
-        )
+        exact_composite = len(source_indices) > 1 and source_sequence == target_sequence
         certified = edge.reason.startswith("verified-") or (
             edge.reason == "same-proof-context"
             and edge.source_node_id == edge.target_node_id
         )
         source_context_id = (
             source_node.path[1]
-            if len(source_node.path) >= 2
-            and source_node.path[0] == "context"
+            if len(source_node.path) >= 2 and source_node.path[0] == "context"
             else None
         )
         crosses_from_persistent_context = (
@@ -461,7 +865,8 @@ def _semantic_transition_plan(
         )
         role = (
             TransitionRole.COPY
-            if edge.reason == "verified-premise-copy"
+            if edge.relation in {"copy", "split"}
+            or edge.reason == "verified-premise-copy"
             or crosses_from_persistent_context
             or source_is_stored_elsewhere
             else (
@@ -486,9 +891,13 @@ def _semantic_transition_plan(
             source_occurrences: dict[str, list[int]] = {}
             target_occurrences: dict[str, list[int]] = {}
             for index in source_indices:
-                source_occurrences.setdefault(source_token_texts[index], []).append(index)
+                source_occurrences.setdefault(source_token_texts[index], []).append(
+                    index
+                )
             for index in target_indices:
-                target_occurrences.setdefault(target_token_texts[index], []).append(index)
+                target_occurrences.setdefault(target_token_texts[index], []).append(
+                    index
+                )
             pairs = tuple(
                 TokenPair(source_occurrences[token][0], target_occurrences[token][0])
                 for token in sorted(
@@ -498,11 +907,7 @@ def _semantic_transition_plan(
                 if len(source_occurrences[token]) == 1
                 and len(target_occurrences[token]) == 1
             )
-        elif (
-            len(source_indices) == 1
-            and len(target_indices) == 1
-            and certified
-        ):
+        elif len(source_indices) == 1 and len(target_indices) == 1 and certified:
             pairs = (TokenPair(source_indices[0], target_indices[0]),)
         else:
             # A composite rewrite needs an explicit child-level proof map.
@@ -513,9 +918,7 @@ def _semantic_transition_plan(
             and source_sequence != target_sequence
         )
         pair_groups = (
-            tuple((pair,) for pair in pairs)
-            if split_structural_shell
-            else (pairs,)
+            tuple((pair,) for pair in pairs) if split_structural_shell else (pairs,)
         )
         for group_index, pair_group in enumerate(pair_groups):
             group_role = (
@@ -559,6 +962,7 @@ def _semantic_transition_plan(
         len(target_token_texts),
         tuple(candidates),
     )
+
 
 def _tokens_in_semantic_spans(token_spans, semantic_spans) -> list[int]:
     return _TokenSpanIndex.build(token_spans).overlapping(semantic_spans)

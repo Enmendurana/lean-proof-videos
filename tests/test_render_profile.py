@@ -57,7 +57,9 @@ def test_semantic_chunks_prefer_transition_boundaries_and_cover_every_frame() ->
     assert ranges[0] == (0, 289)
     assert ranges[1] == (290, 599)
     assert ranges[-1][-1] == 999
-    assert [start for start, _end in ranges[1:]] == [end + 1 for _start, end in ranges[:-1]]
+    assert [start for start, _end in ranges[1:]] == [
+        end + 1 for _start, end in ranges[:-1]
+    ]
 
 
 def test_local_chunk_identity_ignores_unrelated_later_state(tmp_path: Path) -> None:

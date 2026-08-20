@@ -8,6 +8,7 @@ from pathlib import Path
 
 from proof_video.cache import stable_hash
 
+
 def _assemble_master(
     master: Path,
     output: Path,
@@ -53,6 +54,7 @@ def _assemble_master(
             ]
         )
     temporary.replace(output)
+
 
 def _assemble_segments(
     segments: list[Path],
@@ -138,11 +140,15 @@ def _assemble_segments(
         )
     temporary.replace(output)
 
+
 def _run_ffmpeg(command: list[str]) -> None:
     try:
         subprocess.run(command, check=True)
     except subprocess.CalledProcessError as error:
-        raise SystemExit(f"FFmpeg could not assemble the cached segments: {error}") from error
+        raise SystemExit(
+            f"FFmpeg could not assemble the cached segments: {error}"
+        ) from error
+
 
 def _ffmpeg_path(path: Path) -> str:
     return path.resolve().as_posix().replace("'", "'\\''")

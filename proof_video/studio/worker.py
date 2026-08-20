@@ -35,7 +35,9 @@ def main(argv: list[str] | None = None) -> int:
     event_path = job_root / "events.ndjson"
     status_path = job_root / "worker-status.json"
     journal = JsonLinesProgressSink(event_path)
-    sequence = sum(1 for _ in event_path.open(encoding="utf-8")) if event_path.exists() else 0
+    sequence = (
+        sum(1 for _ in event_path.open(encoding="utf-8")) if event_path.exists() else 0
+    )
 
     def sink(event: ProgressEvent) -> None:
         """Give every manual and captured stdout event one durable sequence."""
@@ -43,7 +45,9 @@ def main(argv: list[str] | None = None) -> int:
         sequence += 1
         journal(replace(event, sequence=sequence))
 
-    def emit(kind: str, phase: str, message: str, progress: float | None = None) -> None:
+    def emit(
+        kind: str, phase: str, message: str, progress: float | None = None
+    ) -> None:
         nonlocal sequence
         sink(
             ProgressEvent(
@@ -86,7 +90,11 @@ def main(argv: list[str] | None = None) -> int:
         emit("cancelled", "cancelled", "Job cancelled; checkpoints were preserved.")
         _write_json(
             status_path,
-            {"status": "cancelled", "returnCode": 130, "finishedAt": datetime.now(UTC).isoformat()},
+            {
+                "status": "cancelled",
+                "returnCode": 130,
+                "finishedAt": datetime.now(UTC).isoformat(),
+            },
         )
         return 130
     except BaseException as error:
@@ -108,7 +116,11 @@ def main(argv: list[str] | None = None) -> int:
     emit("completed", "complete", "Job completed successfully.", 1.0)
     _write_json(
         status_path,
-        {"status": "succeeded", "returnCode": 0, "finishedAt": datetime.now(UTC).isoformat()},
+        {
+            "status": "succeeded",
+            "returnCode": 0,
+            "finishedAt": datetime.now(UTC).isoformat(),
+        },
     )
     return 0
 

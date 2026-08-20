@@ -134,7 +134,10 @@ def generate_module_plan(lean_file: Path) -> ModulePlan | None:
     except ValueError:
         path_key = hashlib.sha256(str(lean_file).encode("utf-8")).hexdigest()[:16]
         generated_root = (
-            project_root / "GeneratedProofs" / "External" / f"G{path_key}"
+            project_root
+            / "GeneratedProofs"
+            / "External"
+            / f"G{path_key}"
             / lean_file.stem
         )
     module_prefix = ".".join(generated_root.relative_to(project_root).parts)
@@ -267,7 +270,9 @@ def materialize_module_plan(
         rebuild_unit_chapter = False
         if rebuild_chapter is not None and unit_trace.exists():
             try:
-                existing = hydrate_hybrid_manifest(read_json(unit_trace), base_dir=unit_trace.parent)
+                existing = hydrate_hybrid_manifest(
+                    read_json(unit_trace), base_dir=unit_trace.parent
+                )
                 rebuild_unit_chapter = any(
                     str(chapter.get("theoremName", "")) == rebuild_chapter
                     for chapter in existing.get("chapters", [])

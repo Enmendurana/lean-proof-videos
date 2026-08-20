@@ -324,7 +324,9 @@ def test_proof_definition_appears_only_after_its_value_is_completed() -> None:
             "parentScopeId": "root" if scope != "root" else None,
             "depth": 1 if scope != "root" else 0,
             "kind": kind,
-            "rule": "let-proof" if kind == "proof-definition" else "theorem-application",
+            "rule": "let-proof"
+            if kind == "proof-definition"
+            else "theorem-application",
             "premises": premises or [],
             "propositionLatex": proposition,
             "propositionLean": proposition,
@@ -405,7 +407,9 @@ def test_named_proof_definition_shadows_the_older_local_declaration() -> None:
             "parentScopeId": parent_scope,
             "depth": scope.count("/"),
             "kind": kind,
-            "rule": "let-proof" if kind == "proof-definition" else "theorem-application",
+            "rule": "let-proof"
+            if kind == "proof-definition"
+            else "theorem-application",
             "premises": premises or [],
             "propositionLatex": proposition,
             "propositionLean": proposition,

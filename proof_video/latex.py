@@ -112,7 +112,9 @@ def lean_to_latex(expression: str) -> str:
         text = re.sub(rf"\b{source}\b", lambda _m, t=target: t, text)
 
     text = re.sub(r"\b([A-Z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)\b", _operator, text)
-    text = re.sub(r"\b([A-Za-z][A-Za-z0-9_']*)\.([A-Za-z][A-Za-z0-9_']*)\b", _qualified, text)
+    text = re.sub(
+        r"\b([A-Za-z][A-Za-z0-9_']*)\.([A-Za-z][A-Za-z0-9_']*)\b", _qualified, text
+    )
     text = re.sub(r"(?<!\\)\^\s*([A-Za-z0-9]+)", r"^{\1}", text)
     text = re.sub(
         r"(?<!\\)\b([A-Za-z][A-Za-z0-9_']*)\s+([A-Za-z0-9][A-Za-z0-9_']*)",

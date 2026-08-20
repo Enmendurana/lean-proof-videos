@@ -22,7 +22,10 @@ def test_render_request_maps_preview_and_resume_to_shared_cli(
     assert "--preview-tail" in arguments
     assert "--resume" in arguments
     assert arguments[arguments.index("--render-hardware") + 1] == "gpu-required"
-    assert arguments[arguments.index("--trace-mode") + 1] == "proof-term"
+    # Every public entry point must select the same canonical ABI-5 action
+    # frontier by default.  The old proof-term mode remains an explicit
+    # compatibility option, never a silent web/CLI divergence.
+    assert arguments[arguments.index("--trace-mode") + 1] == "hybrid"
     assert arguments[arguments.index("--toolchain-backend") + 1] == "auto"
     assert "--trace-backend" not in arguments
 

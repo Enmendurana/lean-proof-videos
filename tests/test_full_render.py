@@ -23,7 +23,9 @@ def _options(tmp_path: Path) -> dict:
     }
 
 
-def test_full_render_invokes_one_guarded_scene_and_publishes_master(tmp_path: Path) -> None:
+def test_full_render_invokes_one_guarded_scene_and_publishes_master(
+    tmp_path: Path,
+) -> None:
     output = tmp_path / "proof.mp4"
 
     def fake_render(*args) -> None:
@@ -31,7 +33,9 @@ def test_full_render_invokes_one_guarded_scene_and_publishes_master(tmp_path: Pa
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(b"silent master")
 
-    with patch("proof_video.render._render_full_guarded", side_effect=fake_render) as render:
+    with patch(
+        "proof_video.render._render_full_guarded", side_effect=fake_render
+    ) as render:
         stats = render_full(_movie(), output, **_options(tmp_path))
 
     render.assert_called_once()

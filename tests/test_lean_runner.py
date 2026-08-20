@@ -1,11 +1,16 @@
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
+
+import pytest
 
 from proof_video.artifact_integrity import record_artifact
 from proof_video.cache import lean_extractor_identity
 from proof_video.lean_runner import (
     EXTRACTOR_ARTIFACT_KIND,
+    SNAPSHOT_READER_BUILD_TIMEOUT_SECONDS,
     ensure_extractor_executable,
+    ensure_snapshot_reader_modules,
     extractor_executable_path,
 )
 
@@ -86,3 +91,26 @@ def test_locked_canonical_executable_links_versioned_copy(
 
     assert ensure_extractor_executable(tmp_path) == executable
     assert linked == [(tmp_path.resolve(), executable)]
+
+
+def test_snapshot_reader_timeout_is_a_backend_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _minimal_project(tmp_path)
+
+    def timed_out(command, **kwargs):
+        assert command == [
+            "lake",
+            "build",
+            "ProofLatex",
+            "SnapshotCertificate",
+            "SnapshotReader",
+        ]
+        assert kwargs["timeout"] == SNAPSHOT_READER_BUILD_TIMEOUT_SECONDS
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr("proof_video.lean_runner.subprocess.run", timed_out)
+
+    with pytest.raises(SystemExit, match="auto backend may now retry"):
+        ensure_snapshot_reader_modules(tmp_path)

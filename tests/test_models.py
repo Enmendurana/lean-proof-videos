@@ -310,9 +310,7 @@ def test_premise_transfer_preserves_body_when_notation_folds_to_negation() -> No
                 fingerprint="body",
                 parent_id="target-root",
                 path=("0", "1"),
-                latex_spans=(
-                    SemanticSpan(len(target_prefix), len(target_latex)),
-                ),
+                latex_spans=(SemanticSpan(len(target_prefix), len(target_latex)),),
             ),
         ),
     )
@@ -447,8 +445,7 @@ def test_hidden_premise_branch_copies_atom_from_its_actual_assumption() -> None:
         for edge in branch_edges
     )
     assert not any(
-        edge.source_node_id == "proof-context-24/other-x"
-        for edge in branch_edges
+        edge.source_node_id == "proof-context-24/other-x" for edge in branch_edges
     )
 
 
@@ -624,9 +621,7 @@ def test_contracted_derivation_composes_carrier_rewrite_from_multiple_rows() -> 
             kind="app",
             fingerprint="old-carrier",
             path=("context", 11, "0"),
-            latex_spans=(
-                SemanticSpan(carrier_offset, carrier_offset + len(carrier)),
-            ),
+            latex_spans=(SemanticSpan(carrier_offset, carrier_offset + len(carrier)),),
         ),
         SemanticExpressionNode(
             "proof-context-11/carrier-fcall",
@@ -813,10 +808,7 @@ def test_contracted_derivation_composes_carrier_rewrite_from_multiple_rows() -> 
         target_rule="forall-introduction",
         visible_steps_by_id={5: equality_step},
     )
-    keys = {
-        (edge.source_node_id, edge.target_node_id, edge.reason)
-        for edge in edges
-    }
+    keys = {(edge.source_node_id, edge.target_node_id, edge.reason) for edge in edges}
     assert (
         "proof-context-11/carrier-fcall",
         "target-fcall",
@@ -935,21 +927,32 @@ def test_forall_compound_substitution_is_new_not_borrowed_from_equal_context() -
         source_latex,
         nodes=(
             SemanticExpressionNode(
-                "source-forall", kind="forall", path=("0",),
+                "source-forall",
+                kind="forall",
+                path=("0",),
                 latex_spans=(SemanticSpan(0, len(source_latex)),),
             ),
             SemanticExpressionNode(
-                "source-body", kind="app", parent_id="source-forall", path=("0", "1"),
+                "source-body",
+                kind="app",
+                parent_id="source-forall",
+                path=("0", "1"),
                 latex_spans=(SemanticSpan(body_start, body_start + 4),),
             ),
             SemanticExpressionNode(
-                "source-function", kind="fvar", identity="function-f",
-                parent_id="source-body", path=("0", "1", "0"),
+                "source-function",
+                kind="fvar",
+                identity="function-f",
+                parent_id="source-body",
+                path=("0", "1", "0"),
                 latex_spans=(SemanticSpan(body_start, body_start + 1),),
             ),
             SemanticExpressionNode(
-                "source-binder-use", kind="bvar", identity="bvar:0",
-                parent_id="source-body", path=("0", "1", "1"),
+                "source-binder-use",
+                kind="bvar",
+                identity="bvar:0",
+                parent_id="source-body",
+                path=("0", "1", "1"),
                 latex_spans=(SemanticSpan(body_start + 2, body_start + 3),),
             ),
         ),
@@ -961,17 +964,25 @@ def test_forall_compound_substitution_is_new_not_borrowed_from_equal_context() -
         premises=(2,),
         nodes=(
             SemanticExpressionNode(
-                "target-body", kind="app", path=("0",),
+                "target-body",
+                kind="app",
+                path=("0",),
                 latex_spans=(SemanticSpan(0, len(target_latex)),),
             ),
             SemanticExpressionNode(
-                "target-function", kind="fvar", identity="function-f",
-                parent_id="target-body", path=("0", "0"),
+                "target-function",
+                kind="fvar",
+                identity="function-f",
+                parent_id="target-body",
+                path=("0", "0"),
                 latex_spans=(SemanticSpan(0, 1),),
             ),
             SemanticExpressionNode(
-                "target-substitution", kind="app", fingerprint="same-compound-term",
-                parent_id="target-body", path=("0", "1"),
+                "target-substitution",
+                kind="app",
+                fingerprint="same-compound-term",
+                parent_id="target-body",
+                path=("0", "1"),
                 latex_spans=(SemanticSpan(2, 6),),
             ),
         ),
@@ -1137,9 +1148,7 @@ def test_consumed_staged_premise_transfers_instead_of_copying() -> None:
         ),
     )
 
-    transition = _proof_sequent_transition(
-        previous, (premise,), target, (), {}
-    )
+    transition = _proof_sequent_transition(previous, (premise,), target, (), {})
     assert transition is not None
     assert any(
         edge.source_node_id == "proof-context-1/premise-a"
@@ -1228,8 +1237,7 @@ def test_transitive_provenance_copies_only_fingerprint_certified_assumption() ->
         for edge in transition.edges
     )
     assert not any(
-        edge.source_node_id == "old-algebra"
-        and edge.target_node_id == "new-algebra"
+        edge.source_node_id == "old-algebra" and edge.target_node_id == "new-algebra"
         for edge in transition.edges
     )
 
@@ -1308,9 +1316,7 @@ def test_forall_introduction_moves_old_body_and_local_declaration() -> None:
                 fingerprint="real",
                 parent_id="new-forall",
                 path=("0", "0"),
-                latex_spans=(
-                    SemanticSpan(domain_start, domain_start + len(real)),
-                ),
+                latex_spans=(SemanticSpan(domain_start, domain_start + len(real)),),
             ),
             SemanticExpressionNode(
                 "new-body",
@@ -1409,7 +1415,11 @@ def test_forall_elimination_preserves_rhs_by_ast_path_not_repeated_f_text() -> N
             kind="fvar",
             identity="function-f",
             path=("0", "1", "0", "1", "0"),
-            latex_spans=(SemanticSpan(source_latex.index("f(t)"), source_latex.index("f(t)") + 1),),
+            latex_spans=(
+                SemanticSpan(
+                    source_latex.index("f(t)"), source_latex.index("f(t)") + 1
+                ),
+            ),
         ),
     )
     target = (
@@ -1572,37 +1582,68 @@ def test_semantic_transition_preserves_overlapping_spans_and_edges() -> None:
     raw = {
         "theoremName": "Demo.semantic",
         "startGoal": {"goalId": "g1", "state": "old", "latexTarget": "a+b"},
-        "actions": [{
-            "tacticText": "ring",
-            "goalActions": [{
-                "startGoalId": "g1",
-                "results": [{
-                    "goal": {"goalId": "g2", "state": "new", "latexTarget": "b+a"},
-                    "semanticTransition": {
-                        "proofKind": "ring",
-                        "adapter": "expr-tree-v1",
-                        "goalDiff": {
-                            "sourceGoalId": "g1",
-                            "targetGoalId": "g2",
-                            "sourceChangedPaths": ["target:0.1"],
-                            "targetChangedPaths": ["target:0.0"],
-                        },
-                        "sourceNodes": [
-                            {"id": "whole", "kind": "add", "latexSpans": [{"start": 0, "end": 3}]},
-                            {"id": "left", "kind": "term", "latexSpans": [[0, 1], [2, 3]]},
+        "actions": [
+            {
+                "tacticText": "ring",
+                "goalActions": [
+                    {
+                        "startGoalId": "g1",
+                        "results": [
+                            {
+                                "goal": {
+                                    "goalId": "g2",
+                                    "state": "new",
+                                    "latexTarget": "b+a",
+                                },
+                                "semanticTransition": {
+                                    "proofKind": "ring",
+                                    "adapter": "expr-tree-v1",
+                                    "goalDiff": {
+                                        "sourceGoalId": "g1",
+                                        "targetGoalId": "g2",
+                                        "sourceChangedPaths": ["target:0.1"],
+                                        "targetChangedPaths": ["target:0.0"],
+                                    },
+                                    "sourceNodes": [
+                                        {
+                                            "id": "whole",
+                                            "kind": "add",
+                                            "latexSpans": [{"start": 0, "end": 3}],
+                                        },
+                                        {
+                                            "id": "left",
+                                            "kind": "term",
+                                            "latexSpans": [[0, 1], [2, 3]],
+                                        },
+                                    ],
+                                    "targetNodes": [
+                                        {
+                                            "id": "whole2",
+                                            "kind": "add",
+                                            "latexSpans": [{"start": 0, "end": 3}],
+                                        },
+                                    ],
+                                    "edges": [
+                                        {
+                                            "sourceNodeId": "whole",
+                                            "targetNodeId": "whole2",
+                                        },
+                                        {
+                                            "sourceNodeId": "left",
+                                            "targetNodeId": "whole2",
+                                        },
+                                        {
+                                            "sourceNodeId": "left",
+                                            "targetNodeId": "whole2",
+                                        },
+                                    ],
+                                },
+                            }
                         ],
-                        "targetNodes": [
-                            {"id": "whole2", "kind": "add", "latexSpans": [{"start": 0, "end": 3}]},
-                        ],
-                        "edges": [
-                            {"sourceNodeId": "whole", "targetNodeId": "whole2"},
-                            {"sourceNodeId": "left", "targetNodeId": "whole2"},
-                            {"sourceNodeId": "left", "targetNodeId": "whole2"},
-                        ],
-                    },
-                }],
-            }],
-        }],
+                    }
+                ],
+            }
+        ],
     }
 
     transition = Movie.from_json(raw).frames[1].display_goals[0].semantic_transition
@@ -1616,7 +1657,9 @@ def test_semantic_transition_preserves_overlapping_spans_and_edges() -> None:
     assert transition.goal_diff.target_changed_paths == ("target:0.0",)
     assert transition.source.nodes[1].latex_spans[1].start == 2
     assert [edge.source_node_id for edge in transition.edges] == [
-        "whole", "left", "left"
+        "whole",
+        "left",
+        "left",
     ]
 
 
@@ -1647,22 +1690,38 @@ def test_semantic_frames_preserve_context_changes_and_renumber() -> None:
         "actions": [
             {
                 "tacticText": "change hidden context",
-                "goalActions": [{
-                    "startGoalId": "g1",
-                    "results": [{"goal": {
-                        "goalId": "g2", "state": "hidden context; goal A", "latexTarget": "A",
-                        "latexContext": [{"name": "h", "latex": "P"}]
-                    }}],
-                }],
+                "goalActions": [
+                    {
+                        "startGoalId": "g1",
+                        "results": [
+                            {
+                                "goal": {
+                                    "goalId": "g2",
+                                    "state": "hidden context; goal A",
+                                    "latexTarget": "A",
+                                    "latexContext": [{"name": "h", "latex": "P"}],
+                                }
+                            }
+                        ],
+                    }
+                ],
             },
             {
                 "tacticText": "change target",
-                "goalActions": [{
-                    "startGoalId": "g2",
-                    "results": [{"goal": {
-                        "goalId": "g3", "state": "goal B", "latexTarget": "B"
-                    }}],
-                }],
+                "goalActions": [
+                    {
+                        "startGoalId": "g2",
+                        "results": [
+                            {
+                                "goal": {
+                                    "goalId": "g3",
+                                    "state": "goal B",
+                                    "latexTarget": "B",
+                                }
+                            }
+                        ],
+                    }
+                ],
             },
             {
                 "tacticText": "close",

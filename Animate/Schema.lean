@@ -10,6 +10,68 @@ structure LatexHypothesis where
   latex : String
 deriving Lean.ToJson, Lean.FromJson, BEq
 
+/-- Source coordinates are optional because metavariable goals do not always
+    retain a syntax object.  Keeping the field in the extractor-owned schema
+    lets command-level captures populate it later without changing the public
+    JSON contract. -/
+structure CanonicalSourceRange where
+  file : String
+  startLine : Nat
+  startColumn : Nat
+  endLine : Nat
+  endColumn : Nat
+deriving Lean.ToJson, Lean.FromJson, BEq
+
+/-- One occurrence in an elaborated expression.  Unlike rendered character
+    matching, this identity comes from Lean's expression tree: repeated `x`s
+    are separate occurrences, while free variables and constants retain their
+    Lean identity. -/
+structure CanonicalOccurrence where
+  id : String
+  kind : String
+  path : String
+  fingerprint : String
+  identity : String := ""
+  typeFingerprint : String := ""
+  parentId : Option String := none
+  aliases : Array String := #[]
+  latexSpans : Array SemanticSpan := #[]
+  sourceRange : Option CanonicalSourceRange := none
+deriving Lean.ToJson, Lean.FromJson, BEq
+
+/-- Renderer-independent observation of one elaborated expression. -/
+structure CanonicalExpression where
+  id : String
+  fingerprint : String
+  lean : String := ""
+  latex : String := ""
+  typeFingerprint : String := ""
+  occurrences : Array CanonicalOccurrence := #[]
+  sourceRange : Option CanonicalSourceRange := none
+deriving Lean.ToJson, Lean.FromJson, BEq
+
+/-- A declaration in Lean's ordered local context.  `value` distinguishes a
+    local definition from a hypothesis; no pretty-printed heuristic is needed
+    to recover that distinction in Python. -/
+structure CanonicalLocalDecl where
+  id : String
+  userName : String
+  «type» : CanonicalExpression
+  value : Option CanonicalExpression := none
+  binderInfo : String := "default"
+  kind : String := "hypothesis"
+  /-- Extractor-owned presentation policy.  The declaration remains part of
+      the canonical proof state even when Lean marks it as an implementation
+      detail (or an instance binder), but renderers must not turn it into a
+      mathematical context row.  Recording the decision here avoids name
+      heuristics in downstream consumers. -/
+  presentationVisible : Bool := true
+  dependencies : Array String := #[]
+  aliases : Array String := #[]
+  sourceRange : Option CanonicalSourceRange := none
+  isProof : Bool := false
+deriving Lean.ToJson, Lean.FromJson, BEq
+
 structure Goal where
   --- MVarId
   goalId : String
@@ -20,6 +82,11 @@ structure Goal where
   latexContext : Array LatexHypothesis := #[]
   /-- Elaborated expression occurrences and their exact canonical LaTeX spans. -/
   semanticNodes : Array SemanticNode := #[]
+  /-- Complete ordered local context for the canonical proof-state layer.
+      This deliberately includes declarations hidden by the presentation. -/
+  canonicalLocals : Array CanonicalLocalDecl := #[]
+  /-- Canonical elaborated target, independent of the renderer. -/
+  canonicalTarget : Option CanonicalExpression := none
 deriving Lean.ToJson, Lean.FromJson, BEq
 
 def escapeLatexName (name : String) : String :=
@@ -62,11 +129,50 @@ structure GoalAction where
   }
 deriving Lean.ToJson, Lean.FromJson
 
+/-- One relation between goal identities observed directly at an InfoTree
+    action boundary.  Arrays make split, merge and close relations explicit
+    without reducing them to arbitrary pairwise edges. -/
+structure ObservedGoalLineage where
+  sourceGoalIds : Array String := #[]
+  targetGoalIds : Array String := #[]
+  relation : String := "evolve"
+deriving Lean.ToJson, Lean.FromJson, BEq
+
+/-- Stable reference to a kernel-observed proof entity.  It deliberately does
+    not contain rendered coordinates; the presentation layer projects these
+    references onto glyphs later. -/
+structure CanonicalEntityRef where
+  kind : String
+  goalId : String
+  localId : String := ""
+  expressionRole : String := ""
+  occurrenceId : String := ""
+deriving Lean.ToJson, Lean.FromJson, BEq
+
+/-- Native n→m semantic evidence emitted by the extractor.  In contrast to
+    `SemanticTransition`, these edges never depend on tactic names or textual
+    matching and are not visual instructions. -/
+structure CanonicalEntityHyperedge where
+  sources : Array CanonicalEntityRef := #[]
+  targets : Array CanonicalEntityRef := #[]
+  relation : String
+  provenance : String
+  evidence : Array String := #[]
+deriving Lean.ToJson, Lean.FromJson, BEq
+
 --- Application of a single tactic.
 --- It may act on multiple goals (e.g. when using the <;> combinator).
 structure Action where
   tacticText : String
   goalActions : List GoalAction
+  /-- Complete ordered live frontier immediately before/after this action.
+      These are observations, not reconstructed presentation rows. -/
+  beforeState : Array Goal := #[]
+  afterState : Array Goal := #[]
+  focusBefore : Array String := #[]
+  focusAfter : Array String := #[]
+  goalLineage : Array ObservedGoalLineage := #[]
+  canonicalCorrespondence : Array CanonicalEntityHyperedge := #[]
 deriving Lean.ToJson, Lean.FromJson
 
 structure GoalHighlighting where
@@ -77,6 +183,16 @@ deriving Lean.ToJson, Lean.FromJson
 -- Result of stage 3.
 -- To be jsonified and consumed by animate.py in Blender
 structure Movie where
+  canonicalAbi : Nat := 5
+  capabilities : Array String := #[
+    "canonical-proof-state",
+    "ordered-action-frontiers",
+    "goal-lineage-hyperedges",
+    "canonical-entity-hyperedges",
+    "local-definition-values",
+    "local-presentation-visibility",
+    "expression-occurrences"
+  ]
   theoremName : String
   startGoal : Goal
   actions: List Action

@@ -378,7 +378,9 @@ def _render_full_guarded(
             f"{FULL_RENDER_TIMEOUT_SECONDS} seconds"
         )
     if process.exitcode != 0:
-        details = errors.get() if not errors.empty() else f"exit code {process.exitcode}"
+        details = (
+            errors.get() if not errors.empty() else f"exit code {process.exitcode}"
+        )
         raise RuntimeError(f"OpenGL full scene failed:\n{details}")
 
 
@@ -547,11 +549,11 @@ def _render_segment_guarded(
     if process.is_alive():
         process.terminate()
         process.join(10)
-        raise TimeoutError(
-            f"OpenGL segment {index} did not finish within 180 seconds"
-        )
+        raise TimeoutError(f"OpenGL segment {index} did not finish within 180 seconds")
     if process.exitcode != 0:
-        details = errors.get() if not errors.empty() else f"exit code {process.exitcode}"
+        details = (
+            errors.get() if not errors.empty() else f"exit code {process.exitcode}"
+        )
         raise RuntimeError(f"OpenGL segment {index} failed:\n{details}")
 
 

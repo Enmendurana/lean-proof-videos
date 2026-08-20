@@ -62,7 +62,10 @@ def collect_movie_tex_expressions(movie: Movie) -> tuple[str, ...]:
 
     expressions = {_modified_expression(r"\square")}
     for frame in movie.semantic_frames():
-        for goal in frame.display_goals[:1]:
+        # Every live goal is a GoalForest card. Precompile all of them so a
+        # dormant branch cannot trigger a surprise LaTeX subprocess midway
+        # through a multi-goal transition.
+        for goal in frame.goals or frame.display_goals:
             sources = [*_initial_context_lines(goal), _goal_latex(goal)]
             for source in sources:
                 # The scene always measures the whole row and may additionally

@@ -10,9 +10,7 @@ from proof_video.backend_policy import (
 
 def _project(root: Path) -> None:
     root.mkdir()
-    (root / "lean-toolchain").write_text(
-        "leanprover/lean4:v4.28.0\n", encoding="utf-8"
-    )
+    (root / "lean-toolchain").write_text("leanprover/lean4:v4.28.0\n", encoding="utf-8")
 
 
 def test_auto_orders_432_snapshot_before_428_legacy(tmp_path: Path) -> None:

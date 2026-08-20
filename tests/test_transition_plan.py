@@ -79,7 +79,9 @@ def test_partial_application_is_rejected_even_when_certified_flag_is_set() -> No
 
     assert plan.valid
     assert plan.pairs == ()
-    assert any("partial function application" in item for item in plan.rejected_candidates)
+    assert any(
+        "partial function application" in item for item in plan.rejected_candidates
+    )
 
 
 def test_candidate_order_cannot_change_the_physical_mapping() -> None:

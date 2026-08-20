@@ -137,13 +137,11 @@ def sympy_ast_token_proposals(
                     # SymPy may not pull a bare ``f`` out of it.
                     if any(
                         index + 1 < len(source_token_texts)
-                        and source_token_texts[index + 1]
-                        in {"(", r"\left(", r"\big("}
+                        and source_token_texts[index + 1] in {"(", r"\left(", r"\big("}
                         for index in old
                     ) or any(
                         index + 1 < len(target_token_texts)
-                        and target_token_texts[index + 1]
-                        in {"(", r"\left(", r"\big("}
+                        and target_token_texts[index + 1] in {"(", r"\left(", r"\big("}
                         for index in new
                     ):
                         continue

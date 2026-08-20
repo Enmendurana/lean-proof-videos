@@ -18,14 +18,23 @@ from manim import (
 )
 
 from proof_video.models import Frame, Movie
+from proof_video.presentation import (
+    GoalForestLayout,
+    build_goal_forest_layout,
+    build_goal_forest_timeline,
+)
+from proof_video.presentation.rows import context_presentation_rows
 from proof_video.rendering.pacing import (
     DEFAULT_VISIBLE_GLYPHS_PER_SECOND,
     minimum_visible_action_frames,
 )
 from proof_video.animation.semantic import (
+    authoritative_frame_visual_plan,
     _row_base_key,
     _semantic_mapped_target_row_bases,
     _stable_visual_rows,
+    semantic_mapped_target_row_bases_from_sources,
+    visual_source_goal_ids,
 )
 
 
@@ -37,15 +46,23 @@ from proof_video.animation.scene_helpers import (
     _mapped_row_animations,
     _fallback_row_animation,
     _mapped_rows_animations,
+    _mapped_source_groups_animations,
     _goal_latex,
     _initial_context_lines,
     _safe_mathtex,
     _wrapped_math_rows_with_spans,
 )
+from proof_video.proof.adapters import canonical_presentation_expression
+from proof_video.proof.schema import has_native_canonical_observation
 
 BLACKBOARD = "#000000"
 CHALK = "#F1F0E8"
 DIM_CHALK = "#AAA99F"
+
+
+def _certified_terminal_frame(frame: Frame) -> bool:
+    completion = frame.terminal_completion
+    return completion is not None and completion.certified_closed
 
 
 class ProofScene(MovingCameraScene):
@@ -69,6 +86,7 @@ class ProofScene(MovingCameraScene):
         self.transition_seconds = transition_seconds
         self.settle_seconds = settle_seconds
         self.audio = audio
+        self._goal_forest_layouts: dict[int, GoalForestLayout] = {}
         super().__init__(**kwargs)
 
     def construct(self) -> None:
@@ -76,13 +94,21 @@ class ProofScene(MovingCameraScene):
         if self.audio:
             self.add_sound(str(self.audio), gain=-8)
 
-        frames = tuple(frame for frame in self.movie.semantic_frames() if frame.display_goals)
+        frames = tuple(
+            frame for frame in self.movie.semantic_frames() if frame.display_goals
+        )
         if not frames:
             return
+        self._prepare_goal_forest(frames)
 
         current = self._step_block(frames[0])
         self._place_next(current, None)
-        initial_focus = VGroup(current, self._make_qed(current)) if len(frames) == 1 else current
+        certified_qed = _certified_terminal_frame(frames[-1])
+        initial_focus = (
+            VGroup(current, self._make_qed(current))
+            if len(frames) == 1 and certified_qed
+            else current
+        )
         initial_width = self._camera_width_for(initial_focus)
         self._camera_frame().set_width(initial_width).move_to(
             self._camera_center_for(initial_focus, initial_width)
@@ -127,7 +153,9 @@ class ProofScene(MovingCameraScene):
             self.add(*stable_overlays)
             self.play(
                 *transition_animations,
-                self._camera_frame().animate.move_to(camera_center).set_width(camera_width),
+                self._camera_frame()
+                .animate.move_to(camera_center)
+                .set_width(camera_width),
                 run_time=self.transition_seconds,
             )
 
@@ -147,7 +175,11 @@ class ProofScene(MovingCameraScene):
             self.add(*preserved, clean)
             current = clean
 
-            qed = self._make_qed(current) if position == len(frames) - 1 else None
+            qed = (
+                self._make_qed(current)
+                if position == len(frames) - 1 and certified_qed
+                else None
+            )
             clean_focus = VGroup(current, qed) if qed is not None else current
             clean_width = self._camera_width_for(clean_focus)
             self._camera_frame().set_width(clean_width).move_to(
@@ -165,7 +197,7 @@ class ProofScene(MovingCameraScene):
             if qed is not None:
                 self._write_qed(qed)
 
-        if len(frames) == 1:
+        if len(frames) == 1 and certified_qed:
             self._write_qed(self._make_qed(current))
 
         self.wait(0.8)
@@ -191,7 +223,11 @@ class ProofScene(MovingCameraScene):
             self._place_next(block, previous)
             block.shift(RIGHT * (min(step.depth, 8) * 0.34))
             focus = block
-            qed = self._make_qed(block) if position == len(steps) - 1 else None
+            qed = (
+                self._make_qed(block)
+                if position == len(steps) - 1 and self.movie.certified_closed
+                else None
+            )
             if qed is not None:
                 focus = VGroup(block, qed)
             width = self._camera_width_for(focus)
@@ -200,9 +236,11 @@ class ProofScene(MovingCameraScene):
                 self._camera_frame().set_width(width).move_to(center)
 
             formula = getattr(block, "proof_formula_group", block)
-            decoration = [] if formula is block else [
-                item for item in block if item is not formula
-            ]
+            decoration = (
+                []
+                if formula is block
+                else [item for item in block if item is not formula]
+            )
             if decoration:
                 self.add(*decoration)
             reveal = _glyph_reveal(formula)
@@ -234,9 +272,14 @@ class ProofScene(MovingCameraScene):
         self.wait(0.8)
 
     def _proof_trace_row(self, latex: str, depth: int) -> VGroup:
-        rows = VGroup(*(row for row, _start, _end in _wrapped_math_rows_with_spans(
-            latex, color=CHALK
-        )))
+        rows = VGroup(
+            *(
+                row
+                for row, _start, _end in _wrapped_math_rows_with_spans(
+                    latex, color=CHALK
+                )
+            )
+        )
         rows.arrange(DOWN, aligned_edge=LEFT, buff=0.16)
         if depth <= 0:
             rows.proof_formula_group = rows
@@ -251,21 +294,55 @@ class ProofScene(MovingCameraScene):
         block.proof_formula_group = rows
         return block
 
+    @staticmethod
+    def _is_canonical_frame(frame: Frame) -> bool:
+        return bool(
+            frame.proof_state is not None and has_native_canonical_observation(frame)
+        )
+
+    def _prepare_goal_forest(self, frames: tuple[Frame, ...]) -> None:
+        """Cache one ancestry-aware logical layout for every proof frame."""
+
+        layouts = build_goal_forest_timeline(frames)
+        self._goal_forest_layouts = {
+            id(frame): layout for frame, layout in zip(frames, layouts, strict=True)
+        }
+
+    def _goal_forest_layout(self, frame: Frame) -> GoalForestLayout:
+        layouts = getattr(self, "_goal_forest_layouts", None)
+        if layouts is None:
+            layouts = {}
+            self._goal_forest_layouts = layouts
+        layout = layouts.get(id(frame))
+        if layout is None:
+            # Isolated third-party calls remain deterministic. Real scenes
+            # precompute the complete sequence so branch ancestry also survives
+            # tail previews and independently rendered chunks.
+            layout = build_goal_forest_layout(frame)
+            layouts[id(frame)] = layout
+        return layout
+
     def _step_block(self, frame: Frame) -> VGroup:
         blocks = VGroup()
-        # Animate only the currently focused goal. Lean may return both a new
-        # proof obligation and a dormant continuation (for example `have h`);
-        # rendering both would duplicate nearly the whole blackboard. The
-        # continuation re-enters this same visual block after the obligation
-        # is solved, at which point only its genuinely new row is written.
-        for goal_index, goal in enumerate(frame.display_goals[:1]):
+        layout = self._goal_forest_layout(frame)
+        goals_by_id = {
+            goal.goal_id: goal for goal in (*frame.goals, *frame.focus_goals)
+        }
+        canonical_frame = self._is_canonical_frame(frame)
+        visual_plan = authoritative_frame_visual_plan(frame)
+        for card in layout.cards:
+            goal = goals_by_id.get(card.goal_id)
+            if goal is None:
+                if canonical_frame:
+                    raise ValueError(
+                        f"canonical goal card {card.goal_id!r} has no renderable goal"
+                    )
+                continue
             rows = VGroup()
             block_cursor = 0
+            context_rows = context_presentation_rows(goal)
             context_lines = _initial_context_lines(goal)
-            context_names = [
-                hypothesis.key or hypothesis.name
-                for hypothesis in goal.latex_context
-            ]
+            context_names = [row.stable_key for row in context_rows]
             for context_index, source in enumerate(context_lines):
                 name = (
                     context_names[context_index]
@@ -275,23 +352,45 @@ class ProofScene(MovingCameraScene):
                 wrapped = _wrapped_math_rows_with_spans(source, color=DIM_CHALK)
                 for wrap_index, (row, start, end) in enumerate(wrapped):
                     row.proof_row_key = f"hyp-{name}:{wrap_index}"
+                    row.proof_row_id = f"{card.stable_id}/hyp-{name}:{wrap_index}"
                     row.proof_char_span = (block_cursor + start, block_cursor + end)
                     rows.add(row)
                 block_cursor += len(source) + 1
             source = r"\vdash\;" + _goal_latex(goal)
-            wrapped = _wrapped_math_rows_with_spans(source, color=CHALK)
+            wrapped = _wrapped_math_rows_with_spans(
+                source,
+                color=CHALK if card.is_active else DIM_CHALK,
+            )
             for wrap_index, (row, start, end) in enumerate(wrapped):
                 row.proof_row_key = f"target:{wrap_index}"
+                row.proof_row_id = f"{card.stable_id}/target:{wrap_index}"
                 row.proof_char_span = (block_cursor + start, block_cursor + end)
                 rows.add(row)
 
             rows.arrange(DOWN, aligned_edge=LEFT, buff=0.16)
-            rows.proof_block_key = goal.lineage_id or f"goal-{goal_index}"
+            rows.proof_block_key = card.stable_id
+            rows.proof_goal_id = card.goal_id
+            rows.proof_parent_block_keys = card.parent_card_ids
+            rows.proof_goal_depth = card.depth
+            rows.proof_goal_order = card.order
+            rows.proof_goal_active = card.is_active
+            rows.proof_goal_relation = card.incoming_relation
+            rows.proof_canonical_state = canonical_frame
             rows.proof_latex_index_maps = goal.latex_index_maps
             rows.proof_semantic_transition = goal.semantic_transition
+            rows.proof_semantic_expression = (
+                canonical_presentation_expression(goal)
+                if canonical_frame
+                else getattr(goal.semantic_transition, "target", None)
+            )
+            rows.proof_visual_plan = visual_plan
             blocks.add(rows)
 
         blocks.arrange(DOWN, aligned_edge=LEFT, buff=0.28)
+        for block in blocks:
+            block.shift(RIGHT * (min(getattr(block, "proof_goal_depth", 0), 8) * 0.28))
+        blocks.proof_goal_forest_layout = layout
+        blocks.proof_canonical_state = canonical_frame
         return blocks
 
     @staticmethod
@@ -312,25 +411,94 @@ class ProofScene(MovingCameraScene):
         animations = []
         new_rows = []
 
-        exact_keys = old_blocks.keys() & new_blocks.keys()
-        block_pairs = [(old_blocks[key], new_blocks[key], True) for key in exact_keys]
-        unmatched_old = [old_blocks[key] for key in old_blocks.keys() - exact_keys]
-        unmatched_new = [new_blocks[key] for key in new_blocks.keys() - exact_keys]
+        exact_keys = tuple(key for key in old_blocks if key in new_blocks)
+        block_pairs = [
+            ((old_blocks[key],), new_blocks[key], True, True) for key in exact_keys
+        ]
+        unmatched_old = [old_blocks[key] for key in old_blocks if key not in exact_keys]
+        unmatched_new = [new_blocks[key] for key in new_blocks if key not in exact_keys]
+
+        canonical_route = bool(
+            getattr(source, "proof_canonical_state", False)
+            or getattr(target, "proof_canonical_state", False)
+            or any(
+                getattr(block, "proof_canonical_state", False)
+                for block in (*tuple(source), *tuple(target))
+            )
+        )
+
+        # New cards are related to consumed cards only by the GoalForest
+        # ancestry computed from Lean goal identities. No row text or glyph
+        # similarity participates in split/merge/branch pairing.
+        paired_old: set[int] = set()
+        paired_new: set[int] = set()
+        if canonical_route and unmatched_old and unmatched_new:
+            old_by_key = {
+                getattr(block, "proof_block_key", ""): block for block in unmatched_old
+            }
+            old_by_goal = {
+                getattr(block, "proof_goal_id", ""): block for block in unmatched_old
+            }
+            for new_block in unmatched_new:
+                certified_goal_ids = visual_source_goal_ids(
+                    getattr(new_block, "proof_visual_plan", None),
+                    getattr(new_block, "proof_goal_id", ""),
+                )
+                parents = tuple(
+                    dict.fromkeys(
+                        (
+                            *(
+                                getattr(old_by_goal[goal_id], "proof_block_key", "")
+                                for goal_id in certified_goal_ids
+                                if goal_id in old_by_goal
+                            ),
+                            *(
+                                parent
+                                for parent in getattr(
+                                    new_block, "proof_parent_block_keys", ()
+                                )
+                                if parent in old_by_key
+                            ),
+                        )
+                    )
+                )
+                if not parents:
+                    continue
+                sources = tuple(old_by_key[parent] for parent in parents)
+                block_pairs.append((sources, new_block, True, False))
+                paired_old.update(id(source_block) for source_block in sources)
+                paired_new.add(id(new_block))
+            unmatched_old = [
+                block for block in unmatched_old if id(block) not in paired_old
+            ]
+            unmatched_new = [
+                block for block in unmatched_new if id(block) not in paired_new
+            ]
 
         # When focus returns to a dormant proof branch, its lineage was absent
         # from the immediately preceding frame even though the mathematical
         # block is mostly the same. Pair exactly one old/new block by row
         # similarity. Never do this during a split with an existing exact pair:
         # additional goals must still be written as genuinely new blocks.
-        if not exact_keys and unmatched_old and unmatched_new:
+        if not canonical_route and not exact_keys and unmatched_old and unmatched_new:
             fuzzy_pairs = _similar_block_pairs(unmatched_old, unmatched_new)
-            block_pairs.extend((old, new, False) for old, new in fuzzy_pairs)
+            block_pairs.extend(((old,), new, False, False) for old, new in fuzzy_pairs)
             paired_old = {id(old) for old, _new in fuzzy_pairs}
             paired_new = {id(new) for _old, new in fuzzy_pairs}
-            unmatched_old = [block for block in unmatched_old if id(block) not in paired_old]
-            unmatched_new = [block for block in unmatched_new if id(block) not in paired_new]
+            unmatched_old = [
+                block for block in unmatched_old if id(block) not in paired_old
+            ]
+            unmatched_new = [
+                block for block in unmatched_new if id(block) not in paired_new
+            ]
 
-        for old_block, new_block, use_index_maps in block_pairs:
+        for (
+            source_blocks,
+            new_block,
+            use_index_maps,
+            preserve_stable_rows,
+        ) in block_pairs:
+            old_block = source_blocks[0]
             old = {
                 getattr(row, "proof_row_key", f"old-row-{i}"): row
                 for i, row in enumerate(old_block)
@@ -346,13 +514,17 @@ class ProofScene(MovingCameraScene):
                 # not decompose it into hundreds of token animations.  This
                 # both reflects the proof context and prevents a complex
                 # target rewrite from dimming the entire sequent.
-                stable_row_keys = {
-                    key
-                    for key in old.keys() & new.keys()
-                    if getattr(old[key], "proof_latex_source", None) is not None
-                    and getattr(old[key], "proof_latex_source", None)
-                    == getattr(new[key], "proof_latex_source", None)
-                }
+                stable_row_keys = (
+                    {
+                        key
+                        for key in old.keys() & new.keys()
+                        if getattr(old[key], "proof_latex_source", None) is not None
+                        and getattr(old[key], "proof_latex_source", None)
+                        == getattr(new[key], "proof_latex_source", None)
+                    }
+                    if preserve_stable_rows
+                    else set()
+                )
                 # Upstream animates one persistent object per matched
                 # character across the complete goal state. Do the same at
                 # rendered-token granularity across this entire block, so a
@@ -360,46 +532,83 @@ class ProofScene(MovingCameraScene):
                 # semantic key is wholly new retain our requested chalk-write
                 # entrance instead of appearing all at once.
                 old_bases = {
-                    _row_base_key(key)
-                    for key in old
-                    if key not in stable_row_keys
+                    _row_base_key(getattr(row, "proof_row_key", ""))
+                    for source_block in source_blocks
+                    for row in source_block
+                    if getattr(row, "proof_row_key", "") not in stable_row_keys
                 }
                 semantic_transition = getattr(
                     new_block, "proof_semantic_transition", None
                 )
+                visual_plan = getattr(new_block, "proof_visual_plan", None)
+                semantic_source_groups = tuple(
+                    (
+                        getattr(source_block, "proof_goal_id", ""),
+                        list(source_block),
+                        getattr(source_block, "proof_semantic_expression", None),
+                    )
+                    for source_block in source_blocks
+                    if getattr(source_block, "proof_semantic_expression", None)
+                    is not None
+                )
                 mapped_bases = set(old_bases)
-                if semantic_transition is not None:
+                if semantic_transition is not None or visual_plan is not None:
                     # ``intro x`` moves the quantified binder into a brand-new
                     # context row.  A row is visually new, but the binder and
                     # its type are not new mathematical objects.  Include only
                     # such proof-connected rows in the token transform; rows
                     # with no semantic predecessor are still chalk-written.
                     mapped_bases.update(
-                        _semantic_mapped_target_row_bases(
+                        semantic_mapped_target_row_bases_from_sources(
+                            semantic_source_groups,
+                            list(new_block),
+                            semantic_transition,
+                            visual_plan,
+                            target_goal_id=getattr(new_block, "proof_goal_id", ""),
+                        )
+                        if visual_plan is not None and semantic_source_groups
+                        else _semantic_mapped_target_row_bases(
                             list(old_block),
                             list(new_block),
                             semantic_transition,
+                            visual_plan,
+                            source_goal_id=getattr(old_block, "proof_goal_id", ""),
+                            target_goal_id=getattr(new_block, "proof_goal_id", ""),
                         )
                     )
                 mapped_target_rows = [
                     row
                     for row in new_block
                     if getattr(row, "proof_row_key", "") not in stable_row_keys
-                    if _row_base_key(getattr(row, "proof_row_key", ""))
-                    in mapped_bases
+                    if _row_base_key(getattr(row, "proof_row_key", "")) in mapped_bases
                 ]
-                mapped = _mapped_rows_animations(
-                    # Stable context rows are also legitimate proof sources:
-                    # applying a hypothesis copies its certified expression
-                    # into the conclusion while leaving the hypothesis fixed.
-                    # The mapper marks these rows as protected clone sources.
-                    list(old_block),
-                    mapped_target_rows,
-                    getattr(new_block, "proof_latex_index_maps", None),
-                    semantic_transition,
-                    protected_source_bases={
-                        _row_base_key(key) for key in stable_row_keys
-                    },
+                protected_bases = {_row_base_key(key) for key in stable_row_keys}
+                mapped = (
+                    _mapped_source_groups_animations(
+                        semantic_source_groups,
+                        mapped_target_rows,
+                        semantic_transition,
+                        visual_plan,
+                        target_goal_id=getattr(new_block, "proof_goal_id", ""),
+                        protected_source_bases={
+                            getattr(old_block, "proof_goal_id", ""): protected_bases
+                        },
+                    )
+                    if visual_plan is not None and semantic_source_groups
+                    else _mapped_rows_animations(
+                        # Stable context rows are also legitimate proof sources:
+                        # applying a hypothesis copies its certified expression
+                        # into the conclusion while leaving the hypothesis fixed.
+                        # The mapper marks these rows as protected clone sources.
+                        list(old_block),
+                        mapped_target_rows,
+                        getattr(new_block, "proof_latex_index_maps", None),
+                        semantic_transition,
+                        visual_plan,
+                        protected_source_bases=protected_bases,
+                        source_goal_id=getattr(old_block, "proof_goal_id", ""),
+                        target_goal_id=getattr(new_block, "proof_goal_id", ""),
+                    )
                 )
                 if mapped is not None:
                     animations.extend(mapped)
@@ -410,6 +619,10 @@ class ProofScene(MovingCameraScene):
                         if _row_base_key(getattr(row, "proof_row_key", ""))
                         not in mapped_bases
                     )
+                    continue
+                if len(source_blocks) > 1:
+                    animations.extend(FadeOut(block) for block in source_blocks)
+                    new_rows.extend(new_block)
                     continue
             for row_key in old.keys() & new.keys():
                 mapped = _mapped_row_animations(
@@ -425,11 +638,20 @@ class ProofScene(MovingCameraScene):
                         if use_index_maps
                         else None
                     ),
+                    (
+                        getattr(new_block, "proof_visual_plan", None)
+                        if use_index_maps
+                        else None
+                    ),
+                    source_goal_id=getattr(old_block, "proof_goal_id", ""),
+                    target_goal_id=getattr(new_block, "proof_goal_id", ""),
                 )
                 if mapped is not None:
                     animations.extend(mapped)
                 else:
-                    animations.append(_fallback_row_animation(old[row_key], new[row_key]))
+                    animations.append(
+                        _fallback_row_animation(old[row_key], new[row_key])
+                    )
             for row_key in old.keys() - new.keys():
                 animations.append(FadeOut(old[row_key]))
             for row_key in new.keys() - old.keys():
@@ -508,7 +730,9 @@ class ProofScene(MovingCameraScene):
         return [center_x, focus.get_center()[1], 0]
 
     def _write_time(self, mobject) -> float:
-        minimum = minimum_visible_action_frames(round(config.frame_rate)) / config.frame_rate
+        minimum = (
+            minimum_visible_action_frames(round(config.frame_rate)) / config.frame_rate
+        )
         return max(minimum, _glyph_count(mobject) / self.chars_per_second)
 
     def _write_rows(self, rows: list) -> list:
@@ -535,14 +759,15 @@ class ProofScene(MovingCameraScene):
         if not animated_new_rows:
             return
         new_keys = {
-            getattr(row, "proof_row_key", None)
+            getattr(row, "proof_row_id", getattr(row, "proof_row_key", None))
             for row in animated_new_rows
         }
         clean_rows = [row for block in clean for row in block]
         rows_to_write = [
             row
             for row in clean_rows
-            if getattr(row, "proof_row_key", None) in new_keys
+            if getattr(row, "proof_row_id", getattr(row, "proof_row_key", None))
+            in new_keys
         ]
         write_ids = {id(row) for row in rows_to_write}
         stable_rows = [row for row in clean_rows if id(row) not in write_ids]
@@ -588,9 +813,12 @@ class ProofSegmentScene(ProofScene):
 
     def construct(self) -> None:
         self.camera.background_color = BLACKBOARD
-        frames = tuple(frame for frame in self.movie.semantic_frames() if frame.display_goals)
+        frames = tuple(
+            frame for frame in self.movie.semantic_frames() if frame.display_goals
+        )
         if not frames or not 0 <= self.segment_index < len(frames):
             return
+        self._prepare_goal_forest(frames)
 
         start = max(0, self.segment_index - 3)
         window_frames = frames[start : self.segment_index + 1]
@@ -606,7 +834,7 @@ class ProofSegmentScene(ProofScene):
         blocks = [*history, blocks[-1]]
         self._layout_segment_window(blocks)
         current = blocks[-1]
-        is_final = self.segment_index == len(frames) - 1
+        is_final = _certified_terminal_frame(frames[self.segment_index])
 
         if self.segment_index == 0:
             focus = VGroup(current, self._make_qed(current)) if is_final else current
@@ -725,9 +953,12 @@ class ProofChunkScene(ProofScene):
 
     def construct(self) -> None:
         self.camera.background_color = BLACKBOARD
-        frames = tuple(frame for frame in self.movie.semantic_frames() if frame.display_goals)
+        frames = tuple(
+            frame for frame in self.movie.semantic_frames() if frame.display_goals
+        )
         if not frames:
             return
+        self._prepare_goal_forest(frames)
         start = max(0, min(self.start_index, len(frames)))
         end = max(start, min(self.end_index, len(frames)))
         if start == end:
@@ -787,7 +1018,9 @@ class ProofChunkScene(ProofScene):
             self.add(*overlays)
             self.play(
                 *animations,
-                self._camera_frame().animate.move_to(camera_center).set_width(camera_width),
+                self._camera_frame()
+                .animate.move_to(camera_center)
+                .set_width(camera_width),
                 run_time=self.transition_seconds,
             )
 
@@ -805,7 +1038,7 @@ class ProofChunkScene(ProofScene):
             if len(board_history) > 3:
                 self.remove(board_history.pop(0))
 
-            if index == len(frames) - 1:
+            if _certified_terminal_frame(frame):
                 qed = self._make_qed(current)
                 focus = VGroup(current, qed)
                 width = self._camera_width_for(focus)

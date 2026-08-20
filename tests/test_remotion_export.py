@@ -20,6 +20,8 @@ from proof_video.remotion_export import (
     _visual_token_chunks,
     build_remotion_timeline,
 )
+from proof_video.proof.state import Expression
+from proof_video.proof.completion import CompletionStatus, TerminalCompletion
 from proof_video.transition_plan import (
     TokenPair,
     TransitionCandidate,
@@ -94,7 +96,14 @@ def test_remotion_timeline_has_stable_rows_and_bounded_duration() -> None:
         latex_context=(LatexHypothesis("x", r"\mathbb{R}", key="x-id"),),
         lineage_id="proof",
     )
-    movie = Movie("demo", (Frame(0, "rfl", (first,)), Frame(1, "rw", (second,))))
+    movie = Movie(
+        "demo",
+        (Frame(0, "rfl", (first,)), Frame(1, "rw", (second,))),
+        terminal_completion=TerminalCompletion(
+            status=CompletionStatus.CERTIFIED_CLOSED,
+            source="test-certificate",
+        ),
+    )
 
     timeline = build_remotion_timeline(movie, width=1280, height=720, fps=30)
 
@@ -119,15 +128,16 @@ def test_remotion_timeline_has_stable_rows_and_bounded_duration() -> None:
     first_row_token_count = len(timeline["states"][0]["rows"][0]["tokens"])
     stable_pairs = timeline["transitions"][0]["plan"]["pairs"]
     assert all(
-        [index, index, 0] in stable_pairs
-        for index in range(first_row_token_count)
+        [index, index, 0] in stable_pairs for index in range(first_row_token_count)
     )
     assert not set(range(first_row_token_count)) & set(
         timeline["transitions"][0]["plan"]["deleted"]
     )
 
 
-def test_changed_declaration_follows_current_certified_context_without_pinning() -> None:
+def test_changed_declaration_follows_current_certified_context_without_pinning() -> (
+    None
+):
     first = Goal(
         "g1",
         "",
@@ -186,7 +196,9 @@ def test_initial_local_variables_are_not_pinned_and_duplicated_later() -> None:
 
 
 def test_ordinary_theorem_application_does_not_turn_old_goal_into_postulate() -> None:
-    first = Goal("g1", "", latex_target=r"f(x) < 0 \implies \text{False}", lineage_id="proof")
+    first = Goal(
+        "g1", "", latex_target=r"f(x) < 0 \implies \text{False}", lineage_id="proof"
+    )
     second = Goal(
         "g2",
         "",
@@ -236,7 +248,10 @@ def test_forall_instantiation_uses_visible_premise_without_duplicate_target() ->
     )
 
     timeline = build_remotion_timeline(
-        Movie("explicit-instantiation", (Frame(0, "", (first,)), Frame(1, "forall-elimination", (second,))))
+        Movie(
+            "explicit-instantiation",
+            (Frame(0, "", (first,)), Frame(1, "forall-elimination", (second,))),
+        )
     )
     assert len(timeline["states"]) == 2
     assert [row["latex"] for row in timeline["states"][1]["rows"]] == [
@@ -275,16 +290,74 @@ def test_visible_forall_source_does_not_create_a_redundant_selection_state() -> 
     )
 
     timeline = build_remotion_timeline(
-        Movie("no-redundant-selection", (Frame(0, "", (source,)), Frame(1, "", (result,))))
+        Movie(
+            "no-redundant-selection", (Frame(0, "", (source,)), Frame(1, "", (result,)))
+        )
     )
     assert len(timeline["states"]) == 2
 
 
+def test_canonical_plan_ignores_legacy_presentation_goal_insertion() -> None:
+    def expression(identifier: str, latex: str) -> Expression:
+        return Expression(
+            expression_id=identifier,
+            fingerprint=identifier,
+            lean=latex,
+            latex=latex,
+        )
+
+    first = Goal(
+        "g1",
+        "A",
+        latex_target="A",
+        lineage_id="proof",
+        canonical_target=expression("before", "A"),
+    )
+    compatibility_only = Goal(
+        "legacy-presentation",
+        "P",
+        latex_target="P",
+        lineage_id="legacy-presentation",
+    )
+    second = Goal(
+        "g2",
+        "B",
+        latex_target="B",
+        lineage_id="proof",
+        parent_goal_id="g1",
+        canonical_target=expression("after", "B"),
+        rule_annotations=(
+            RuleAnnotation(
+                key="legacy-selection",
+                latex="P",
+                rule="forall-elimination",
+                source_step_id=1,
+                source_latex="A",
+                source_lean="A",
+                presentation_goals=(compatibility_only,),
+            ),
+        ),
+    )
+
+    timeline = build_remotion_timeline(
+        Movie(
+            "canonical-no-pseudo-step",
+            (
+                Frame(0, "", (first,), canonical_abi=5),
+                Frame(1, "", (second,), canonical_abi=5),
+            ),
+        )
+    )
+
+    assert len(timeline["states"]) == 2
+    assert all(
+        state["tactic"] != "forall-premise-selection" for state in timeline["states"]
+    )
+
+
 def test_hybrid_trace_fvar_identity_preserves_keyless_hypothesis_row() -> None:
     context = (LatexHypothesis("h", "P"),)
-    first = Goal(
-        "g1", "", latex_target="A", latex_context=context, lineage_id="proof"
-    )
+    first = Goal("g1", "", latex_target="A", latex_context=context, lineage_id="proof")
     transition = SemanticTransition(
         source=SemanticExpression(
             (
@@ -331,8 +404,7 @@ def test_hybrid_trace_fvar_identity_preserves_keyless_hypothesis_row() -> None:
     plan = timeline["transitions"][0]["plan"]
 
     assert all(
-        [index, index, 0] in plan["pairs"]
-        for index in range(context_token_count)
+        [index, index, 0] in plan["pairs"] for index in range(context_token_count)
     )
     assert not set(range(context_token_count)) & set(plan["deleted"])
 
@@ -385,12 +457,9 @@ def test_calc_moves_previous_conclusion_into_a_carried_proof_row() -> None:
     # The carried row is immediately before the target, so derive its actual
     # flattened offset without relying on the number of context rows.
     carried_start = sum(
-        len(row["tokens"])
-        for row in target_rows[: target_rows.index(carried)]
+        len(row["tokens"]) for row in target_rows[: target_rows.index(carried)]
     )
-    carried_targets = set(
-        range(carried_start, carried_start + len(carried["tokens"]))
-    )
+    carried_targets = set(range(carried_start, carried_start + len(carried["tokens"])))
     pairs = timeline["transitions"][0]["plan"]["pairs"]
     mapped = [pair for pair in pairs if pair[1] in carried_targets]
 
@@ -401,8 +470,8 @@ def test_calc_moves_previous_conclusion_into_a_carried_proof_row() -> None:
     assert all(copy == 0 for _source, _target, copy in mapped)
 
 
-def test_sibling_goal_never_reuses_common_parent_transition() -> None:
-    """A closed calc child is not the Lean source of its pending sibling."""
+def test_live_sibling_persists_without_reusing_common_parent_transition() -> None:
+    """A pending sibling stays visible but never borrows the closed child."""
 
     parent = Goal("parent", "", latex_target="A", lineage_id="proof")
     first = Goal(
@@ -452,11 +521,7 @@ def test_sibling_goal_never_reuses_common_parent_transition() -> None:
                 ),
             )
         ),
-        edges=(
-            SemanticTransitionEdge(
-                "parent-a", "second-c", "same-fvar", 1.0
-            ),
-        ),
+        edges=(SemanticTransitionEdge("parent-a", "second-c", "same-fvar", 1.0),),
         proof_kind="goal-reduction",
         adapter="calc",
     )
@@ -483,7 +548,20 @@ def test_sibling_goal_never_reuses_common_parent_transition() -> None:
     )
 
     second_plan = timeline["transitions"][1]["plan"]
-    assert second_plan is None or second_plan["pairs"] == []
+    assert second_plan is not None
+    source_rows = timeline["states"][1]["rows"]
+    source_index = 0
+    sibling_indices: set[int] = set()
+    for row in source_rows:
+        row_indices = set(range(source_index, source_index + len(row["tokens"])))
+        if row.get("goalId") == "second-child":
+            sibling_indices.update(row_indices)
+        source_index += len(row["tokens"])
+    assert sibling_indices
+    assert second_plan["pairs"]
+    assert all(
+        source in sibling_indices for source, _target, _copy in second_plan["pairs"]
+    )
     assert not any(
         row["key"].startswith("carried-conclusion-")
         for row in timeline["states"][2]["rows"]
@@ -529,9 +607,7 @@ def test_semantic_moves_change_the_plan_but_not_the_global_step_clock(
     movie = Movie("demo", (Frame(0, "rfl", (first,)), Frame(1, "rw", (second,))))
 
     def moved_plan(*_args, **_kwargs) -> TransitionPlan:
-        target_count = len(
-            _latex_matching_token_spans(r"\vdash\;" + formula)
-        )
+        target_count = len(_latex_matching_token_spans(r"\vdash\;" + formula))
         return TransitionPlan(
             source_count=1,
             target_count=target_count,
@@ -681,9 +757,7 @@ def test_writing_density_is_unbounded_but_step_duration_has_a_frame_floor() -> N
     assert timeline["writeSpeed"] == 1000.0
     assert timeline["transitionFrames"] == 2
 
-    timeline_30fps = build_remotion_timeline(
-        movie, fps=30, chars_per_second=1000.0
-    )
+    timeline_30fps = build_remotion_timeline(movie, fps=30, chars_per_second=1000.0)
     assert timeline_30fps["transitionFrames"] == 3
 
 
@@ -724,7 +798,16 @@ def test_remotion_tail_preview_is_the_final_twenty_seconds_with_qed() -> None:
         for index in range(100)
     )
     timeline = build_remotion_timeline(
-        Movie("demo", frames), fps=30, preview_tail_seconds=20.0
+        Movie(
+            "demo",
+            frames,
+            terminal_completion=TerminalCompletion(
+                status=CompletionStatus.CERTIFIED_CLOSED,
+                source="test-certificate",
+            ),
+        ),
+        fps=30,
+        preview_tail_seconds=20.0,
     )
 
     assert len(timeline["states"]) > 15
@@ -769,33 +852,28 @@ def test_long_proof_continuously_accelerates_then_decelerates() -> None:
     ]
 
     assert opening and cruise and closing
-    assert all(
-        left >= right
-        for left, right in zip(opening, opening[1:], strict=False)
-    )
+    assert all(left >= right for left, right in zip(opening, opening[1:], strict=False))
     assert len(set(cruise)) == 1
-    assert all(
-        left <= right
-        for left, right in zip(closing, closing[1:], strict=False)
+    assert all(left <= right for left, right in zip(closing, closing[1:], strict=False))
+    assert (
+        max(left / right for left, right in zip(opening, opening[1:], strict=False))
+        <= 1.15
     )
-    assert max(
-        left / right
-        for left, right in zip(opening, opening[1:], strict=False)
-    ) <= 1.15
-    assert max(
-        right / left
-        for left, right in zip(closing, closing[1:], strict=False)
-    ) <= 1.15
+    assert (
+        max(right / left for left, right in zip(closing, closing[1:], strict=False))
+        <= 1.15
+    )
     assert opening[0] == 2 * timeline["transitionFrames"]
     assert opening[-1] == timeline["transitionFrames"]
     assert closing[0] == timeline["transitionFrames"]
     assert closing[-1] == 2 * timeline["transitionFrames"]
-    assert min(
-        transition["durationFrames"] for transition in transitions
-    ) >= timeline["transitionFrames"] == 10
+    assert (
+        min(transition["durationFrames"] for transition in transitions)
+        >= timeline["transitionFrames"]
+        == 10
+    )
     assert all(
-        transition["moveEnd"] == transition["writeEnd"]
-        for transition in transitions
+        transition["moveEnd"] == transition["writeEnd"] for transition in transitions
     )
     assert all(
         transition["moveEnd"] == transition["writeEnd"] == 1.0
@@ -844,12 +922,8 @@ def test_endpoint_speed_is_independent_of_middle_speed() -> None:
     )
     movie = Movie("speed-demo", frames)
 
-    slow_middle = build_remotion_timeline(
-        movie, fps=30, chars_per_second=24.0
-    )
-    fast_middle = build_remotion_timeline(
-        movie, fps=30, chars_per_second=60.0
-    )
+    slow_middle = build_remotion_timeline(movie, fps=30, chars_per_second=24.0)
+    fast_middle = build_remotion_timeline(movie, fps=30, chars_per_second=60.0)
 
     assert slow_middle["transitionFrames"] == 20
     assert fast_middle["transitionFrames"] == 8
@@ -881,6 +955,7 @@ def test_long_formula_is_balanced_into_visual_rows_without_losing_tokens() -> No
     assert all(row["key"].startswith("target-wrap-") for row in rows)
     rendered_tokens = [token for row in rows for token, _start, _end in row["tokens"]]
     expected_tokens = [
-        token for token, _start, _end in _latex_matching_token_spans(r"\vdash\;" + formula)
+        token
+        for token, _start, _end in _latex_matching_token_spans(r"\vdash\;" + formula)
     ]
     assert rendered_tokens == expected_tokens

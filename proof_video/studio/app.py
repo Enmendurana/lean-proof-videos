@@ -142,7 +142,9 @@ def create_app(
         return {"status": "ok", "version": 1, "root": str(root)}
 
     @app.post("/api/session")
-    async def exchange_session(payload: BootstrapRequest, response: Response) -> dict[str, bool]:
+    async def exchange_session(
+        payload: BootstrapRequest, response: Response
+    ) -> dict[str, bool]:
         try:
             session = security.exchange_bootstrap_token(payload.token)
         except ValueError as error:
@@ -211,7 +213,9 @@ def create_app(
     )
     async def restore(project_id: str, revision_id: str, payload: RestoreRequest):
         try:
-            return sources.restore_revision(project_id, revision_id, payload.base_sha256)
+            return sources.restore_revision(
+                project_id, revision_id, payload.base_sha256
+            )
         except SourceConflictError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         except (KeyError, ValueError) as error:
@@ -230,16 +234,24 @@ def create_app(
 
     @app.post("/api/jobs", dependencies=auth)
     async def create_job(payload: JobCreate) -> dict[str, Any]:
-        if payload.kind not in {"validate", "preview-head", "preview-tail", "render-full"}:
+        if payload.kind not in {
+            "validate",
+            "preview-head",
+            "preview-tail",
+            "render-full",
+        }:
             raise HTTPException(status_code=400, detail="invalid job kind")
         options = dict(payload.options)
         if options.get("audio"):
             audio = Path(str(options["audio"])).resolve()
             allowed_audio_roots = (root, state / "audio")
-            if not any(
-                _is_within(audio, allowed_root.resolve())
-                for allowed_root in allowed_audio_roots
-            ) or not audio.is_file():
+            if (
+                not any(
+                    _is_within(audio, allowed_root.resolve())
+                    for allowed_root in allowed_audio_roots
+                )
+                or not audio.is_file()
+            ):
                 raise HTTPException(status_code=400, detail="invalid audio path")
             options["audio"] = str(audio)
         try:
@@ -259,7 +271,8 @@ def create_app(
         output = store.jobs_root / created["id"] / "result.mp4"
         with store.connect() as connection:
             connection.execute(
-                "UPDATE jobs SET output_path = ? WHERE id = ?", (str(output), created["id"])
+                "UPDATE jobs SET output_path = ? WHERE id = ?",
+                (str(output), created["id"]),
             )
         runner.wake()
         return _job_response(store.job(created["id"]))
@@ -298,7 +311,8 @@ def create_app(
         output = store.jobs_root / created["id"] / "result.mp4"
         with store.connect() as connection:
             connection.execute(
-                "UPDATE jobs SET output_path = ? WHERE id = ?", (str(output), created["id"])
+                "UPDATE jobs SET output_path = ? WHERE id = ?",
+                (str(output), created["id"]),
             )
         runner.wake()
         return _job_response(store.job(created["id"]))
@@ -341,7 +355,10 @@ def create_app(
                             )
                         offset = handle.tell()
                 current = store.job(job_id)
-                if current["status"] in FINAL_STATUSES or current["status"] == "interrupted":
+                if (
+                    current["status"] in FINAL_STATUSES
+                    or current["status"] == "interrupted"
+                ):
                     terminal_idle = terminal_idle + 1 if not emitted else 0
                     if terminal_idle >= 2:
                         return
@@ -378,7 +395,9 @@ def create_app(
             path = sources.safe_artifact(job_id, row["relative_path"])
         except (KeyError, ValueError, FileNotFoundError) as error:
             raise HTTPException(status_code=404, detail="artifact not found") from error
-        return FileResponse(path, filename=None, media_type=mimetypes.guess_type(path.name)[0])
+        return FileResponse(
+            path, filename=None, media_type=mimetypes.guess_type(path.name)[0]
+        )
 
     @app.post("/api/audio", dependencies=auth)
     async def upload_audio(
@@ -423,7 +442,9 @@ def create_app(
 
     resolved_static = static_root or root / "studio" / "dist"
     if resolved_static.is_dir():
-        app.mount("/assets", StaticFiles(directory=resolved_static / "assets"), name="assets")
+        app.mount(
+            "/assets", StaticFiles(directory=resolved_static / "assets"), name="assets"
+        )
 
         @app.get("/{path:path}")
         async def frontend(path: str) -> FileResponse:

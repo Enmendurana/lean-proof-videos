@@ -8,6 +8,12 @@ from typing import Any, Iterable
 
 from proof_video.cache import write_json
 from proof_video.models import Movie
+from proof_video.presentation.model import validate_visual_plan
+from proof_video.presentation.rows import context_presentation_rows
+from proof_video.proof.correspondence import validate_total_correspondence
+from proof_video.proof.effects import apply_transition
+from proof_video.proof.schema import has_native_canonical_observation
+from proof_video.proof.state import validate_state
 
 
 _LEAN_FALLBACK = r"\operatorname{Lean}\left[\text{"
@@ -16,10 +22,14 @@ _IMPLEMENTATION_NAME = re.compile(
 )
 
 
-def _hybrid_results(raw: dict[str, Any]) -> Iterable[tuple[str, int, dict[str, Any], dict[str, Any]]]:
+def _hybrid_results(
+    raw: dict[str, Any],
+) -> Iterable[tuple[str, int, dict[str, Any], dict[str, Any]]]:
     for chapter in raw.get("chapters", ()):
         theorem = str(chapter.get("theoremName", ""))
-        for action_index, action in enumerate(chapter.get("movie", {}).get("actions", ())):
+        for action_index, action in enumerate(
+            chapter.get("movie", {}).get("actions", ())
+        ):
             for goal_action in action.get("goalActions", ()):
                 for result in goal_action.get("results", ()):
                     yield theorem, action_index, goal_action, result
@@ -60,11 +70,14 @@ def build_quality_report(raw: dict[str, Any]) -> dict[str, Any]:
     checked_transitions = 0
     persistent_objects = 0
 
-    if str(raw.get("schemaVersion", "")).startswith("3"):
+    if str(raw.get("schemaVersion", "")).startswith(("3", "4")):
         for theorem, action_index, goal_action, result in _hybrid_results(raw):
             explanation = goal_action.get("explanation", {})
             fingerprint = str(goal_action.get("proofFingerprint", ""))
-            if explanation and str(explanation.get("certificateFingerprint", "")) != fingerprint:
+            if (
+                explanation
+                and str(explanation.get("certificateFingerprint", "")) != fingerprint
+            ):
                 errors.append(
                     f"{theorem} action {action_index}: tactic explanation certificate differs"
                 )
@@ -72,7 +85,9 @@ def build_quality_report(raw: dict[str, Any]) -> dict[str, Any]:
             adapters[adapter] += 1
             transition = result.get("semanticTransition")
             if not transition:
-                errors.append(f"{theorem} action {action_index}: semantic transition missing")
+                errors.append(
+                    f"{theorem} action {action_index}: semantic transition missing"
+                )
                 continue
             checked_transitions += 1
             source_nodes = transition.get("sourceNodes", ())
@@ -153,22 +168,143 @@ def build_movie_quality_report(movie: Movie) -> dict[str, Any]:
     adapters: Counter[str] = Counter()
     checked_transitions = 0
     persistent_objects = 0
+    canonical_transitions = 0
+    visual_primitives = 0
+    fallback_primitives = 0
     frames = movie.semantic_frames()
     for frame_index, frame in enumerate(frames):
-        if not frame.display_goals:
+        visible_goals = frame.goals or frame.display_goals
+        if not visible_goals:
             continue
-        goal = frame.display_goals[0]
-        _append_latex_issues(
-            movie.theorem_name,
-            (
-                *(hypothesis.render_latex() for hypothesis in goal.latex_context),
-                goal.latex_target or goal.state,
-            ),
-            errors,
-            warnings,
-        )
+        for goal in visible_goals:
+            _append_latex_issues(
+                f"{movie.theorem_name} frame {frame.index} goal {goal.goal_id}",
+                (
+                    *(row.latex for row in context_presentation_rows(goal)),
+                    goal.latex_target or goal.state,
+                ),
+                errors,
+                warnings,
+            )
         if frame_index == 0:
             continue
+
+        previous = frames[frame_index - 1]
+        previous_goals = previous.display_goals
+        previous_lineage = previous_goals[0].lineage_id if previous_goals else ""
+        current_lineage = (
+            frame.display_goals[0].lineage_id if frame.display_goals else ""
+        )
+        current_scope = current_lineage.partition("/")[0]
+        previous_scope = previous_lineage.partition("/")[0]
+        chapter_boundary = (
+            current_scope.startswith("chapter-")
+            and previous_scope.startswith("chapter-")
+            and current_scope != previous_scope
+        )
+
+        if frame.canonical_abi >= 5:
+            if not has_native_canonical_observation(frame):
+                errors.append(
+                    f"{movie.theorem_name} frame {frame.index}: canonical ABI 5 "
+                    "is missing a structured canonical goal expression"
+                )
+                continue
+            before = previous.proof_state
+            after = frame.proof_state
+            transition = frame.proof_transition
+            plan = frame.visual_plan
+            if chapter_boundary and transition is None:
+                continue
+            missing = [
+                name
+                for name, value in (
+                    ("before proof state", before),
+                    ("after proof state", after),
+                    ("proof transition", transition),
+                    ("visual plan", plan),
+                )
+                if value is None
+            ]
+            if missing:
+                errors.append(
+                    f"{movie.theorem_name} frame {frame.index}: canonical ABI 5 "
+                    f"is missing {', '.join(missing)}"
+                )
+                continue
+
+            assert before is not None
+            assert after is not None
+            assert transition is not None
+            assert plan is not None
+            canonical_transitions += 1
+            checked_transitions += 1
+            adapters[transition.metadata.source or "canonical-state-delta"] += 1
+            before_errors = validate_state(before)
+            after_errors = validate_state(after)
+            errors.extend(
+                f"{movie.theorem_name} frame {frame.index}: invalid source state: {item}"
+                for item in before_errors
+            )
+            errors.extend(
+                f"{movie.theorem_name} frame {frame.index}: invalid target state: {item}"
+                for item in after_errors
+            )
+            correspondence_errors = validate_total_correspondence(
+                before, after, transition.correspondence
+            )
+            errors.extend(
+                f"{movie.theorem_name} frame {frame.index}: {item}"
+                for item in correspondence_errors
+            )
+            try:
+                replayed = apply_transition(before, transition)
+            except ValueError as exc:
+                errors.append(
+                    f"{movie.theorem_name} frame {frame.index}: canonical replay failed: {exc}"
+                )
+            else:
+                if replayed != after:
+                    errors.append(
+                        f"{movie.theorem_name} frame {frame.index}: canonical replay "
+                        "did not reconstruct the target state"
+                    )
+            plan_errors = validate_visual_plan(plan)
+            errors.extend(
+                f"{movie.theorem_name} frame {frame.index}: invalid visual plan: {item}"
+                for item in plan_errors
+            )
+            if (
+                plan.before_fingerprint != before.fingerprint
+                or plan.after_fingerprint != after.fingerprint
+            ):
+                errors.append(
+                    f"{movie.theorem_name} frame {frame.index}: visual plan endpoints "
+                    "do not match canonical states"
+                )
+            visual_primitives += len(plan.primitives)
+            fallbacks = tuple(item for item in plan.primitives if item.used_fallback)
+            fallback_primitives += len(fallbacks)
+            if fallbacks:
+                reasons = ", ".join(
+                    dict.fromkeys(item.fallback_reason for item in fallbacks)
+                )
+                warnings.append(
+                    f"{movie.theorem_name} frame {frame.index}: canonical visual "
+                    f"plan used {len(fallbacks)} explicit fallback(s): {reasons}"
+                )
+            if transition.is_identity and plan.primitives:
+                errors.append(
+                    f"{movie.theorem_name} frame {frame.index}: identity transition "
+                    "contains visual primitives"
+                )
+            persistent_objects += sum(
+                item.kind.value in {"keep", "move", "copy", "rewrite", "split", "merge"}
+                for item in plan.primitives
+            )
+            continue
+
+        goal = frame.display_goals[0]
         transition = goal.semantic_transition
         if transition is None:
             # Hybrid traces deliberately concatenate independently certified
@@ -177,17 +313,7 @@ def build_movie_quality_report(movie: Movie) -> dict[str, Any]:
             # across two different theorems would be both visually misleading
             # and logically false.  The strict hybrid audit separately checks
             # chapter dependency order and each kernel certificate.
-            previous_goals = frames[frame_index - 1].display_goals
-            previous_lineage = (
-                previous_goals[0].lineage_id if previous_goals else ""
-            )
-            current_scope = goal.lineage_id.partition("/")[0]
-            previous_scope = previous_lineage.partition("/")[0]
-            if (
-                current_scope.startswith("chapter-")
-                and previous_scope.startswith("chapter-")
-                and current_scope != previous_scope
-            ):
+            if chapter_boundary:
                 continue
             errors.append(
                 f"{movie.theorem_name} frame {frame.index}: semantic transition missing"
@@ -206,8 +332,7 @@ def build_movie_quality_report(movie: Movie) -> dict[str, Any]:
             if node.identity:
                 target_groups[key].append(node.node_id)
         edges = {
-            (edge.source_node_id, edge.target_node_id)
-            for edge in transition.edges
+            (edge.source_node_id, edge.target_node_id) for edge in transition.edges
         }
         for key in source_groups.keys() & target_groups.keys():
             sources = source_groups[key]
@@ -228,7 +353,10 @@ def build_movie_quality_report(movie: Movie) -> dict[str, Any]:
         "warnings": list(dict.fromkeys(warnings)),
         "summary": {
             "checkedTransitions": checked_transitions,
+            "canonicalTransitions": canonical_transitions,
             "persistentObjects": persistent_objects,
+            "visualPrimitives": visual_primitives,
+            "fallbackPrimitives": fallback_primitives,
             "tacticAdapters": dict(sorted(adapters.items())),
         },
     }
@@ -276,11 +404,14 @@ def write_quality_report(path: Path, report: dict[str, Any]) -> tuple[Path, Path
     json_path = path.with_suffix(".qa.json")
     html_path = path.with_suffix(".qa.html")
     write_json(json_path, report)
-    rows = "".join(
-        f"<li class='{kind}'>{escape(message)}</li>"
-        for kind in ("error", "warning")
-        for message in report[f"{kind}s"]
-    ) or "<li class='ok'>No semantic or presentation violations.</li>"
+    rows = (
+        "".join(
+            f"<li class='{kind}'>{escape(message)}</li>"
+            for kind in ("error", "warning")
+            for message in report[f"{kind}s"]
+        )
+        or "<li class='ok'>No semantic or presentation violations.</li>"
+    )
     summary = escape(str(report.get("summary", {})))
     html_path.write_text(
         "<!doctype html><meta charset='utf-8'><title>Proof video QA</title>"

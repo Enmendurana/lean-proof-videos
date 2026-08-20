@@ -29,6 +29,10 @@ const smootherstep = (value: number): number => {
   return clamped ** 3 * (clamped * (clamped * 6 - 15) + 10);
 };
 
+const proofRowColor = (row: ProofRow): string => (
+  row.kind === 'context' || row.goalActive === false ? dimChalk : chalk
+);
+
 const activeTransition = (
   timeline: ProofTimeline,
   frame: number,
@@ -173,6 +177,11 @@ export const SemanticProofVideo: React.FC<ProofTimeline> = (timeline) => {
     }
   }
   const celebrationFrames = timeline.celebrationFrames ?? Math.round(2 * timeline.fps);
+  const certifiedQed = Boolean(
+    timeline.showQed
+    && timeline.terminalCompletion?.status === 'certified-closed'
+    && timeline.terminalCompletion.certifiedClosed,
+  );
   const finalHoldStart = timeline.durationInFrames
     - (timeline.completionHoldFrames ?? 0)
     - celebrationFrames;
@@ -187,7 +196,7 @@ export const SemanticProofVideo: React.FC<ProofTimeline> = (timeline) => {
   });
   const waveOffset = (box: TokenBox): number => {
     if (
-      !timeline.showQed
+      !certifiedQed
       || frame < waveStart
       || frame > waveEnd
     ) return 0;
@@ -255,7 +264,7 @@ export const SemanticProofVideo: React.FC<ProofTimeline> = (timeline) => {
         );
         visible.push(<AnimatedToken key={`initial-${token.index}`}
           box={{...token, top: token.top + waveOffset(token)}} latex={token.latex}
-          color={token.row.kind === 'context' ? dimChalk : chalk}
+          color={proofRowColor(token.row)}
           opacity={initialWrite > 0 ? 1 : 0} reveal={initialWrite} />);
       }
     } else {
@@ -383,7 +392,7 @@ export const SemanticProofVideo: React.FC<ProofTimeline> = (timeline) => {
             fontSize: interpolate(pairProgress, [0, 1], [from.fontSize, to.fontSize]),
           }}
           latex={currentLatex}
-          color={to.row.kind === 'context' ? dimChalk : chalk}
+          color={proofRowColor(to.row)}
           // A certified COPY starts exactly on top of its persistent source.
           // Fading the clone in made short transitions look like fresh
           // handwriting near the destination, even though its geometry was
@@ -433,7 +442,7 @@ export const SemanticProofVideo: React.FC<ProofTimeline> = (timeline) => {
           staging?.deletedPhases[deletedOrder] ?? 0,
         );
         visible.push(<AnimatedToken key={`deleted-${sourceIndex}`} box={token} latex={token.latex}
-          color={token.row.kind === 'context' ? dimChalk : chalk}
+          color={proofRowColor(token.row)}
           opacity={interpolate(deletionProgress, [0, 0.55], [1, 0], {extrapolateRight: 'clamp'})} />);
       }
       const createdInWritingOrder = [...plan.created].sort((left, right) => left - right);
@@ -472,7 +481,7 @@ export const SemanticProofVideo: React.FC<ProofTimeline> = (timeline) => {
               ...token,
               top: token.top + waveOffset(token),
             }}
-            latex={token.latex} color={token.row.kind === 'context' ? dimChalk : chalk}
+            latex={token.latex} color={proofRowColor(token.row)}
             opacity={written > 0 ? 1 : 0} reveal={written} />);
         }
       }
@@ -501,7 +510,7 @@ export const SemanticProofVideo: React.FC<ProofTimeline> = (timeline) => {
       {!precomputedBoxes ? <MeasurementState layout={sourceLayout} side="source" fontSize={sourceFontSize} top={sourceTop} /> : null}
       {!precomputedBoxes ? <MeasurementState layout={targetLayout} side="target" fontSize={targetFontSize} top={targetTop} /> : null}
       {visible}
-      {timeline.showQed && qedPosition ? <div style={{
+      {certifiedQed && qedPosition ? <div style={{
         position: 'absolute', left: qedPosition.left, top: qedPosition.top,
         width: qedSize, height: qedSize,
         boxSizing: 'border-box', border: `${Math.max(2, qedSize * 0.055)}px solid ${chalk}`, opacity: qed,

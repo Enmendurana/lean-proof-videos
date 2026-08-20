@@ -119,7 +119,7 @@ class ProofTrace:
         for chapter in self.chapters:
             initial_binders = 0
             chapter_prefix = f"chapter-{chapter.id}/"
-            for step in self.steps[chapter.start_step_id:]:
+            for step in self.steps[chapter.start_step_id :]:
                 if self.chapter_for_step(step.id) != chapter:
                     break
                 proof_path = step.proof_path.removeprefix(chapter_prefix)
@@ -221,8 +221,7 @@ class ProofTrace:
                     continue
                 same_fingerprint = bool(
                     step.proposition_fingerprint
-                    and step.proposition_fingerprint
-                    == premise.proposition_fingerprint
+                    and step.proposition_fingerprint == premise.proposition_fingerprint
                 )
                 if same_fingerprint or (
                     step.proposition_lean
@@ -269,11 +268,15 @@ class ProofTrace:
                 result = (step_id,)
             else:
                 step = by_id.get(step_id)
-                result = () if step is None else tuple(
-                    dict.fromkeys(
-                        ancestor
-                        for premise in step.premises
-                        for ancestor in expand(premise)
+                result = (
+                    ()
+                    if step is None
+                    else tuple(
+                        dict.fromkeys(
+                            ancestor
+                            for premise in step.premises
+                            for ancestor in expand(premise)
+                        )
                     )
                 )
             memo[step_id] = result
@@ -290,9 +293,7 @@ class ProofTrace:
         return {
             step_id: tuple(
                 dict.fromkeys(
-                    ancestor
-                    for _premise, branch in branches
-                    for ancestor in branch
+                    ancestor for _premise, branch in branches for ancestor in branch
                 )
             )
             for step_id, branches in self.rendered_premise_branches().items()
@@ -384,16 +385,15 @@ class ProofTrace:
                 )
             ]
             staging_for = (
-                inference_steps[index + 1]
-                if index + 1 < len(inference_steps)
-                else None
+                inference_steps[index + 1] if index + 1 < len(inference_steps) else None
             )
             if index == 0:
                 staging_for = step
             staged = [
                 producer
                 for producer in inference_steps
-                if inference_positions[producer.id] < index
+                if inference_positions[producer.id]
+                < index
                 < last_use_position.get(producer.id, -1)
             ]
             lexical_ids = {binder.id for binder in lexical_context}
@@ -443,14 +443,12 @@ class ProofTrace:
             proof_definition_fingerprints = {
                 binder.proposition_fingerprint
                 for binder in lexical_context
-                if binder.kind == "proof-definition"
-                and binder.proposition_fingerprint
+                if binder.kind == "proof-definition" and binder.proposition_fingerprint
             }
             proof_definition_propositions = {
                 binder.proposition_lean
                 for binder in lexical_context
-                if binder.kind == "proof-definition"
-                and binder.proposition_lean
+                if binder.kind == "proof-definition" and binder.proposition_lean
             }
             staged = [
                 producer
@@ -463,8 +461,7 @@ class ProofTrace:
                     )
                     or (
                         producer.proposition_lean
-                        and producer.proposition_lean
-                        in proof_definition_propositions
+                        and producer.proposition_lean in proof_definition_propositions
                     )
                 )
             ]
@@ -482,9 +479,7 @@ class ProofTrace:
             prior_visible = [*previous_context]
             if previous_step is not None:
                 prior_visible.append(previous_step)
-            preserved = [
-                item for item in prior_visible if item.id in candidate_ids
-            ]
+            preserved = [item for item in prior_visible if item.id in candidate_ids]
             preserved_ids = {item.id for item in preserved}
             context = tuple(
                 [
@@ -512,7 +507,10 @@ class ProofTrace:
                 parents.setdefault(step.scope_id, None)
             if step.opens_scope:
                 parents[step.opens_scope] = step.parent_scope_id or "root"
-            if step.kind in {"assumption", "eigenvariable", "definition"} and step.opens_scope:
+            if (
+                step.kind in {"assumption", "eigenvariable", "definition"}
+                and step.opens_scope
+            ):
                 binders.append(step)
 
         def is_ancestor(outer: str, inner: str) -> bool:

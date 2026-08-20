@@ -4,7 +4,7 @@
 
 Mathematical notation is generated semantically from elaborated `Lean.Expr` values by [LeanTeX](https://github.com/kmill/LeanTeX). The older string converter remains for traces created before semantic LaTeX fields were added and as a fallback for expression kinds that LeanTeX explicitly marks as unhandled.
 
-The default is a standard 1920×1080, 30 fps, 16:9 YouTube video rendered by Remotion. The Manim compatibility renderer uses OpenGL when available and falls back to Cairo automatically. Every hybrid tactic action retains its checked proof-assignment fingerprint and semantic transition; every chapter retains a whole-declaration kernel certificate. A second validator rejects invalid fingerprints, dependencies or semantic edges before rendering starts; the renderer never invents proof steps.
+The default is a standard 1920×1080, 30 fps, 16:9 YouTube video rendered by Remotion. The alternative Manim renderer uses OpenGL when available and falls back to Cairo automatically. Every native ABI 5 tactic action records its complete ordered before/after goal frontiers, focus, goal lineage and canonical entity hyperedges; every hybrid chapter retains a whole-declaration kernel certificate. A second validator rejects invalid fingerprints, dependencies, correspondence or replay before rendering starts; the renderer never invents proof steps.
 
 Long Lean runs now produce `command-profile.json` beside their chapter
 checkpoints. While a command is active, terminal progress includes its exact
@@ -22,11 +22,11 @@ theorem.lean
     ▼
 kernel/proof index + selective source InfoTree + kernel chapter checks
     ▼
-Hybrid trace v3.1/v4 manifest + content-addressed theorem objects
+Hybrid trace v3.1/v4 manifest + ABI 5 action frontiers + content-addressed theorem objects
     │  independent validation + certified live-sequent projection
     ▼
 one evolving proof timeline
-    │  Remotion (default) or Manim compatibility renderer
+    │  shared GoalForestLayout/visual plan → Remotion (default) or Manim
     ▼
 silent MP4 on the infinite blackboard
     │  optional licensed audio muxed afterwards with FFmpeg
@@ -46,12 +46,25 @@ proof logic never depends on Manim or browser geometry:
 ```text
 proof_video/
 ├── proof/
-│   ├── schema.py       immutable JSON/domain data contracts
+│   ├── state.py        canonical immutable goals, locals and expression occurrences
+│   ├── correspondence.py many-to-many semantic identity hypergraph
+│   ├── effects.py      typed state-change algebra and exact replay
+│   ├── diff.py         deterministic observation, normalization and composition
+│   ├── binder_transport.py binder motion from state shape and Lean evidence
+│   ├── goal_transport.py goal lineage and shared branch correspondence
+│   ├── interpretation.py effect-derived explanation (never tactic authority)
+│   ├── adapters.py     migration from legacy trace schemas
+│   ├── schema.py       compatibility JSON/domain data contracts
 │   ├── trace.py        certified ProofTrace presentation timeline
-│   ├── explainers.py   certified tactic-evidence adapters
 │   ├── matching.py     expression-path and rendered-span primitives
 │   ├── branch_provenance.py  multi-premise proof-DAG composition
 │   └── semantics.py    sequent construction and rule-level AST edges
+├── presentation/
+│   ├── anchors.py      renderer-free semantic layout addresses
+│   ├── model.py        finite visual primitive vocabulary
+│   ├── semantic_plan.py canonical transition → shared visual plan
+│   ├── goal_forest.py  stable layout of every live goal and branch
+│   └── debug.py        complete JSON explanation of that boundary
 ├── animation/
 │   ├── semantic.py     renderer-neutral token correspondence planning
 │   ├── latex.py        LeanTeX cleanup and LaTeX tokenization
@@ -90,9 +103,18 @@ proof_video/
 └── remotion_export.py  compact browser-renderer timeline export
 ```
 
-The dependency direction is `proof → animation → renderer`: proof modules do
-not import Manim or Remotion, and the Remotion exporter no longer imports the
-Manim scene merely to tokenize formulas.
+The semantic dependency direction is `proof → presentation → renderer`:
+the canonical state/correspondence/effect modules do not import Manim or
+Remotion.  The compatibility adapter is the orchestration boundary that
+attaches presentation records to old public `Frame` objects.  A
+`ProofTransition` must replay to its exact target state before presentation
+planning starts.  Manim and Remotion receive the same semantic anchors,
+visual primitives and sequential `GoalForestLayout`; neither may infer
+identity from equal-looking glyphs.  See
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the state model, normal form,
+replay/composition laws and representative proof operations, and
+[docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for explicit fallback
+boundaries.
 
 The Lean implementation follows the same boundary discipline. `Animate.lean`
 is a compatibility façade over `Animate.Config`, `Animate.Schema`,
@@ -176,15 +198,18 @@ default. Add `-- proof-video: theorem Namespace.name` anywhere in the Lean file
 to select a different declaration while keeping the same two-argument command.
 The equivalent installed command is `.\.venv\Scripts\render-proof.exe`.
 
-The two-path command deliberately chooses the strict fine-grained proof-term
-profile for an ordinary proof. `auto` runs the shared extractor over the Lean
-4.32 incremental snapshot and falls back to Lean 4.28/legacy if that operation
-fails. Both backends contract version-specific kernel plumbing to the same 71
-human-visible IMO states instead of the 30 source-tactic states in the scalable
-hybrid trace. This is a presentation-quality choice, not a weaker audit; all
-states remain kernel-derived and strict-audited. Pass
-`--trace-granularity scalable` only when you explicitly want the smaller
-source-tactic trace.
+The two-path command selects native ABI 5 source actions. `auto` runs the
+canonical extractor over the Lean 4.32 incremental snapshot and falls back to
+Lean 4.28/legacy only if that complete Lean phase fails. Both toolchains export
+the same project-owned ordered goal frontiers, focus, lineage and semantic
+hyperedges. The unbounded proof-term projection remains available explicitly
+as `--trace-granularity fine` for compatibility and low-level debugging; it is
+not a second source of renderer semantics.
+
+For an exhaustive post-render visual audit, run `review-proof-render` with the
+MP4 and its timeline JSON. It extracts the exact before/mid/after frames for
+every proof transition and writes JSON/CSV manifests plus numbered contact
+sheets; see [the IMO review workflow](docs/IMO_2011_P3_REVIEW.md).
 
 ## Long proofs and resumable rendering
 
@@ -463,13 +488,13 @@ rows without weakening verification. The CLI writes `<video>.audit.json` and
 refuses to render a trace whose chapter certificate, dependency order, action
 fingerprint or semantic edge is invalid.
 
-The explanation layer is extensible without weakening that rule. Built-in
-adapters for `rw`/`subst`/`change`, `simp`, `ring` and
-`linarith`/`nlinarith` expose the exact premise identities, supporting
-constants, proof kind and assignment fingerprint produced by Lean. They never
-manufacture a plausible rewrite sequence from repeated symbols. An unknown
-tactic remains one kernel-certified source move until a tactic-specific
-extractor can provide equally strong evidence.
+The interpretation layer is derived from normalized goal/context/target
+effects.  Tactic text and adapter names may label diagnostics, but native ABI
+5 correspondence never dispatches on `rw`, `subst`, `simp`, `ring`,
+`linarith`, or any other tactic spelling.  An automation tactic remains one
+kernel-certified source move when Lean exposes no stable internal frontier;
+the application never manufactures a plausible rewrite sequence from repeated
+symbols.
 
 Every run writes timing and cache data to `<video>.metrics.json`. Before
 rendering, `<video>.qa.json` and `.qa.html` check semantic persistence,
@@ -485,7 +510,16 @@ append-only 128-row fragments, but can be much larger and less readable than the
 source-tactic presentation. `--trace-mode tactic` is the legacy single-theorem
 compatibility format.
 
-There are no step labels. The board shows one live sequent: active assumptions and local definitions above, and exactly one current conclusion after `\vdash`. A new assumption is written glyph by glyph; an existing conclusion is rearranged in place using proof-expression identity. Identical context rows remain the same settled objects and never blink merely because the conclusion changes. Every formula uses one fixed chalk font size, while the camera dynamically zooms to fit the sequent. Entering or leaving a quantified scope expands or contracts the same block. The final mathematical conclusion ends with a deliberately paced QED square.
+There are no step labels. The board shows every live goal as a stable card:
+assumptions and local definitions above one conclusion after `\vdash` in each
+card.  The first focused card is active; other live branches remain present
+and dimmed. A new assumption is written glyph by glyph; an existing conclusion
+is rearranged in place using proof-expression identity. Identical context rows
+remain the same settled objects and never blink merely because the conclusion
+changes. Every formula uses one fixed chalk font size, while the camera
+dynamically zooms to fit the live forest. Entering or leaving a quantified
+scope expands or contracts the same card. The final mathematical conclusion
+ends with a deliberately paced QED square.
 
 The legacy tactic-state animation is still useful when comparing the new architecture with the original project. Invoke it explicitly:
 
@@ -496,7 +530,18 @@ The legacy tactic-state animation is still useful when comparing the new archite
 
 In this fallback mode, the Manim timeline follows upstream `goalActions`, and the semantic transition machinery below controls in-place transformations of goal rows.
 
-State changes are driven by elaborated `Lean.Expr` occurrences rather than repeated characters. Each occurrence has an expression-tree path, an `FVarId`/constant identity or normalized fingerprint, and its exact span in the unchanged LeanTeX output. Certified rule adapters transform those paths (for example the body path of `forall` elimination and introduction). Local `x : A` declarations have explicit binder/name/colon/type nodes, so closing a scope moves that same declaration into `\forall x : A` instead of manufacturing a second `x`. Complete applications such as `f(x)` are indivisible transition candidates; a bare function head can never move independently.
+State changes are driven by elaborated `Lean.Expr` occurrences rather than
+repeated characters. Each occurrence has an expression-tree path, an
+`FVarId`/constant identity or normalized fingerprint, and its exact span in
+the unchanged LeanTeX output. ABI 5 transports binders and expressions through
+native identity/alias/definitional-equality hyperedges; certified
+natural-deduction path adapters remain only in the separate proof-term
+compatibility projection. Local `x : A` declarations have explicit
+binder/name/colon/type entities, so closing a scope can move that declaration
+into `\forall x : A` when Lean certifies the relation. If it does not, the
+safe result is remove/create rather than a name-based guess. Complete
+applications such as `f(x)` are preferred maximal transition candidates; a
+bare equal-looking function glyph is never sufficient identity.
 
 Source actions additionally use Lean's own `TacticInfo` before/after
 metavariable contexts.  Parentage is recovered with `Meta.getMVars`, matching
@@ -516,9 +561,28 @@ audit evidence and animate in place instead of appearing as administrative
 `x := value` lines.  This keeps source-action lifecycle, kernel certificates,
 and visual presentation independent without losing any proof obligation.
 
-The strict renderer compiles Lean edges into a `TransitionPlan` containing only `preserve`, `copy`, `rewrite`, `create` and `delete` operations. Google OR-Tools CP-SAT selects a globally non-overlapping set of maximal AST hyperedges across all visible rows. A second validator checks the solver result before Manim sees it. Equal LaTeX, equal SVG shapes, screen position, generic fingerprints and SymPy are not proof of identity and cannot produce strict moves. Anything unresolved becomes `delete + create` (visually, a new write) rather than a guessed transform. This is deliberately conservative: a transition may be less elegant, but it cannot permute two equal-looking `f`, parentheses, relations or binders without a certified edge. Legacy `latexIndexMaps`, shape matching and optional SymPy analysis remain isolated to old tactic traces that do not claim strict ProofTrace semantics.
+The strict planner normalizes Lean evidence into a total correspondence
+hypergraph (`preserve`, `rewrite`, `copy`, `split`, `merge`, `create`, and
+`remove`) plus typed goal/context/target effects.  Applying that transition
+must reconstruct the exact immutable target state.  It then produces one
+renderer-neutral visual plan (`keep`, `move`, `copy`, `rewrite`, `create`,
+`remove`, `split`, `merge`, `close`, `focus`, and `reorder`).  Google OR-Tools
+CP-SAT selects a globally non-overlapping set of maximal physical occurrence
+routes at the renderer-token boundary, and a second validator checks the
+selection before either renderer uses it. Equal LaTeX, equal SVG shapes,
+screen position, generic fingerprints and SymPy are not proof of identity and
+cannot produce strict moves. Anything unresolved becomes remove/create
+(visually, a new write) rather than a guessed transform. This is deliberately
+conservative: a transition may be less elegant, but it cannot permute two
+equal-looking `f`, parentheses, relations or binders without a certified
+edge. Legacy `latexIndexMaps` and safe whole-row fallback remain isolated to
+ABI 1–4 traces.
 
-For old non-strict tactic traces only, a secondary [SymPy AST matcher](https://docs.sympy.org/latest/modules/parsing.html) can still analyze bounded algebraic subexpressions. Strict ProofTrace rendering never promotes a SymPy or textual proposal to a physical move; algebraic preservation must be exported as a certified Lean congruence/rewrite path or it is written anew.
+The repository retains an offline/tested [SymPy AST proposal
+module](https://docs.sympy.org/latest/modules/parsing.html), but the production
+renderer does not call it.  SymPy or textual equality is never promoted to a
+physical move; algebraic preservation must be exported as a certified Lean
+congruence/rewrite path or it is written anew.
 
 New rows use Manim's real stroke-drawing `Write` animation, one visible mathematical glyph after another. Letters are traced onto the board instead of merely becoming visible. The first render is therefore more expensive; pass `--cache` when you want Manim animations and segmented transition files to remain reusable.
 
@@ -547,21 +611,32 @@ blocks, export a transition map without starting Manim:
   -o .\output\imo-2011-p3-demo.mp4
 ```
 
-The diagnostic follows the rendered semantic timeline and its first focused
-goal. `semantic_transition` edges come directly from Lean expression identities
-and retain their `reason`, `confidence`, `proofKind`, and `adapter`. Nodes absent
-from those edges are listed as unmapped; the tool never fills semantic gaps with
-an older character map. `legacy_character_map` identifies old
-`latexIndexMaps`, while `legacy_shape_fallback` means Manim must choose matching
-glyphs at render time and the diagnostic deliberately emits no invented edges.
-Dormant branches also report their row-similarity confidence and the reason for
-remaining inside one visual block. Formula references separately identify
+Transition-map schema 2 follows the rendered semantic timeline and retains the
+old first-focused-goal block report for compatibility.  Every transition also
+contains a renderer-independent `canonical` record: exact before/after
+fingerprints, ordered goal/local/occurrence IDs, correspondence hyperedges with
+relation/provenance/evidence/confidence, typed effects, derived interpretation,
+layout anchors, the shared goal-forest layout, visual primitives and explicit
+fallback reasons.  Its replay check confirms that applying the normalized
+transition reconstructs the exact target state.  On ABI 5 input the native
+`canonicalCorrespondence` hyperedges are authoritative; the compatibility
+`semantic_transition` below is not consulted as an additional identity graph.
+
+Inside the compatibility block report, `semantic_transition` edges come from
+Lean expression evidence and retain their `reason`, `confidence`, `proofKind`,
+and `adapter`. Nodes absent from those edges are listed as unmapped; the tool
+never fills semantic gaps with an older character map.
+`legacy_character_map` identifies old `latexIndexMaps`, while
+`legacy_shape_fallback` means a compatibility renderer may use a safe
+whole-row fallback and the diagnostic deliberately emits no invented semantic
+edges. Dormant branches also report their row-similarity confidence and why
+they remain inside one visual block. Formula references separately identify
 semantic LeanTeX, per-expression legacy fallback, and old traces rendered from
 Lean's pretty-printed state.
 
 Useful options:
 
-- `--engine remotion|manim`: use the faster one-render Remotion path (default), or explicitly select the legacy Manim path
+- `--engine remotion|manim`: use the faster Remotion path (default), or the alternative Manim renderer; both consume the same canonical visual and goal-forest plans for ABI 5
 - `--render-concurrency auto|N`: calibrate Chromium tabs for this machine (default), or force a number; `--remotion-concurrency` remains an alias
 - `--render-hardware auto|cpu|gpu-required`: use quality-validated NVENC when available, force x264, or fail unless GPU encoding succeeds
 - `--render-chunking auto|SECONDS|off`: use semantic 5--15 second checkpoints, fixed-size checkpoints, or one full render
@@ -585,7 +660,7 @@ Useful options:
 - `--rebuild-chapter THEOREM`: rebuild one theorem chapter while reusing compatible siblings
 - `--toolchain-backend auto|lean-4.32|lean-4.28`: `auto` first uses the isolated Lean 4.32.1 snapshot backend and automatically retries the complete Lean phase with 4.28/legacy if 4.32 fails; the explicit choices are fail-fast
 - `--trace-backend snapshot|legacy`: use the validated 4.32 incremental prefrontend or the legacy frontend (`snapshot` requires Lean 4.32)
-- `render-proof --trace-granularity auto|fine|scalable`: ordinary two-path renders default to the fine proof-term profile; resumable sources default to scalable hybrid chapters
+- `render-proof --trace-granularity auto|fine|scalable`: `auto` and `scalable` use canonical ABI 5 source-action chapters (`scalable` is an explicit long-proof spelling); `fine` selects the proof-term compatibility projection
 - `--cache`: additionally reuse Manim/Remotion rendering artifacts
 - `--no-cache`: disable renderer reuse; durable Lean evidence remains enabled
 - `--write-speed 48`: set the middle proof-animation pace. In Remotion, movement and writing share the complete duration of each step; the first and final step retain the same fixed absolute speed, while the edge curves adapt smoothly to the selected middle pace. The `--chars-per-second` alias remains for compatibility.
@@ -650,9 +725,12 @@ ceiling.
 
 ## What is rendered
 
-- One left-aligned live sequent is shown: active assumptions/definitions and one current conclusion. Previous states are not accumulated below it.
+- Every live Lean goal is shown as one left-aligned goal card.  Cards share a
+  stable renderer-independent goal-forest identity and branch ancestry; the
+  active/focused goal is bright while other live branches remain visible and
+  dimmed. Previous states are not accumulated as duplicate rows.
 - Introducing a binder adds a context row; discharging it removes that row and transforms the conclusion. A mathematical `let` such as `s := …` is shown, while proof-valued implementation lets remain only in the strict trace.
-- Unchanged context rows are held stationary. In strict hybrid or ProofTrace mode, changed subexpressions move only through certified Lean identities; bounded SymPy matching is available only to legacy tactic traces.
+- Unchanged context rows are held stationary. In strict hybrid or ProofTrace mode, changed subexpressions move only through certified Lean correspondence; the production renderer does not use SymPy equality to move them.
 - Formula glyphs keep one uniform world-space size. The camera alone zooms in or out as the live block grows, contracts, or wraps.
 - Movement and writing use the duration of their current step, so their speed follows the same continuous opening/middle/closing curve and they finish together. Formula length changes the writing density, not the step duration. The final mathematical state ends with a deliberately paced `\square` QED mark on its right.
 - Common Lean notation (`∀`, `∃`, `→`, `ℕ`, `Nat.Prime`, and similar) is converted to LaTeX. Unknown declarations remain mathematical `\operatorname{...}` expressions instead of source-code text.
@@ -668,8 +746,8 @@ The first usable milestone in this repository covers the complete local path fro
 3. **CLI and duration control — implemented.** One command exports JSON, renders an unlimited-duration MP4 by default, supports local audio, and optionally accepts an explicit duration ceiling.
 4. **Semantic notation — implemented.** LeanTeX renders elaborated expression trees; the legacy string converter is only a fallback.
 5. **Full and incremental rendering — implemented.** Remotion renders bounded resumable ranges concurrently and losslessly assembles them; one-scene and segmented Manim paths remain available. OpenGL is isolated behind a timeout and Cairo fallback.
-6. **Proof-semantic transformations — implemented.** Lean exports elaborated expression occurrences, proof-assignment classification, tactic adapters, LaTeX spans, and deterministic logical edges. Character maps are legacy-only.
-7. **Live-sequent presentation — implemented.** The renderer keeps one conclusion and its active assumptions in a persistent block; unchanged rows are never retyped or whole-board faded.
+6. **Proof-semantic transformations — implemented.** Lean exports elaborated expression occurrences, proof-assignment classification, native canonical hyperedges, LaTeX spans, ordered frontiers and goal lineage. Character maps and pairwise tactic adapters are legacy-only.
+7. **Live goal-forest presentation — implemented.** Each live goal keeps one conclusion and its active assumptions in a persistent card; split, merge, focus, reorder and close use one shared `GoalForestLayout`, and unchanged rows are never retyped or whole-board faded.
 8. **Editorial automation — next.** Add hook selection for long proofs, automatic title cards, and batch rendering.
 9. **Channel production — next.** Add reusable licensed soundtrack profiles, thumbnail generation, subtitle/metadata export, and a render queue.
 

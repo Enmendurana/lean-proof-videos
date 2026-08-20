@@ -45,7 +45,9 @@ def _read_message(connection: socket.socket, limit: int) -> dict[str, Any]:
             chunks.append(block[:newline])
             size += newline
             if size > limit:
-                raise SnapshotWorkerError("snapshot worker message exceeds safety limit")
+                raise SnapshotWorkerError(
+                    "snapshot worker message exceeds safety limit"
+                )
             break
         chunks.append(block)
         size += len(block)
@@ -63,11 +65,14 @@ def _read_message(connection: socket.socket, limit: int) -> dict[str, Any]:
 def _send(port: int, token: str, payload: dict[str, Any]) -> dict[str, Any]:
     with socket.create_connection(("127.0.0.1", port), timeout=5.0) as connection:
         connection.settimeout(None)
-        request = json.dumps(
-            {"token": token, **payload},
-            ensure_ascii=False,
-            separators=(",", ":"),
-        ).encode("utf-8") + b"\n"
+        request = (
+            json.dumps(
+                {"token": token, **payload},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            + b"\n"
+        )
         if len(request) > _MAX_REQUEST_BYTES:
             raise SnapshotWorkerError("snapshot worker request is unexpectedly large")
         connection.sendall(request)
@@ -148,11 +153,18 @@ def _serve(
                 with connection:
                     try:
                         request = _read_message(connection, _MAX_REQUEST_BYTES)
-                        if not secrets.compare_digest(str(request.get("token", "")), token):
-                            raise SnapshotWorkerError("snapshot worker authentication failed")
+                        if not secrets.compare_digest(
+                            str(request.get("token", "")), token
+                        ):
+                            raise SnapshotWorkerError(
+                                "snapshot worker authentication failed"
+                            )
                         operation = request.get("op")
                         if operation == "ping":
-                            response: dict[str, Any] = {"ok": True, "identity": identity}
+                            response: dict[str, Any] = {
+                                "ok": True,
+                                "identity": identity,
+                            }
                         elif operation == "trace":
                             lean_request = request.get("request")
                             if not isinstance(lean_request, dict):
@@ -178,7 +190,9 @@ def _serve(
                                 )
                             response = parsed
                         else:
-                            raise SnapshotWorkerError(f"unknown worker operation: {operation}")
+                            raise SnapshotWorkerError(
+                                f"unknown worker operation: {operation}"
+                            )
                     except Exception as error:  # supervisor protocol boundary
                         response = {"ok": False, "error": str(error)}
                     connection.sendall(
@@ -346,7 +360,9 @@ def request_snapshot_trace(
     if response.get("requestId") != request_id:
         raise SnapshotWorkerError("Lean snapshot worker response ID mismatch")
     if response.get("ok") is not True:
-        raise SnapshotWorkerError(str(response.get("error", "unknown Lean worker error")))
+        raise SnapshotWorkerError(
+            str(response.get("error", "unknown Lean worker error"))
+        )
     if response.get("comparedCommandTrees") is True:
         reused = max(0, int(response.get("reusedCommands", 0)))
         total = max(reused, int(response.get("totalCommands", 0)))

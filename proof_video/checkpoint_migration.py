@@ -50,7 +50,9 @@ def _valid_capture(path: Path) -> bool:
 
 def _atomic_link_or_copy(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(destination.suffix + f".{os.getpid()}.migrating")
+    temporary = destination.with_suffix(
+        destination.suffix + f".{os.getpid()}.migrating"
+    )
     temporary.unlink(missing_ok=True)
     try:
         os.link(source, temporary)
@@ -87,7 +89,10 @@ def seed_compatible_command_captures(
             continue
         for candidate_dir in chapter_root.iterdir():
             candidate_dir = candidate_dir.resolve()
-            if candidate_dir == target_checkpoint_dir or candidate_dir in seen_directories:
+            if (
+                candidate_dir == target_checkpoint_dir
+                or candidate_dir in seen_directories
+            ):
                 continue
             seen_directories.add(candidate_dir)
             profile_path = candidate_dir / "command-profile.json"

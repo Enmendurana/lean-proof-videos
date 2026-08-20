@@ -19,6 +19,7 @@ from proof_video.proof.matching import (
     span_extent,
 )
 from proof_video.proof.schema import ProofStep, SemanticExpressionNode
+from proof_video.proof.state import expression_path_sort_key
 
 
 _EQUALITY_MARKERS = ("=", r"\Leftrightarrow", r"\iff", "⇔")
@@ -64,7 +65,7 @@ def _top_level_equality_sides(
 
     roots = sorted(
         (path for path in by_path if path),
-        key=lambda path: (len(path), path),
+        key=lambda path: (len(path), expression_path_sort_key(path)),
     )
     for root in roots:
         left_nodes = by_path.get((*root, "0"), ())

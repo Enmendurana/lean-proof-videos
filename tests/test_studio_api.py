@@ -21,7 +21,9 @@ def authenticated_client(tmp_path: Path) -> tuple[TestClient, object]:
     return client, app
 
 
-def test_api_versions_source_creates_job_and_lists_range_artifact(tmp_path: Path) -> None:
+def test_api_versions_source_creates_job_and_lists_range_artifact(
+    tmp_path: Path,
+) -> None:
     client, app = authenticated_client(tmp_path)
     project = client.post("/api/projects", json={"path": "Demo.lean"}).json()
     source = client.get(f"/api/projects/{project['id']}/source").json()
@@ -48,7 +50,9 @@ def test_api_versions_source_creates_job_and_lists_range_artifact(tmp_path: Path
     assert ranged.content == b"2345"
 
 
-def test_api_rejects_unauthenticated_origin_traversal_and_replayed_token(tmp_path: Path) -> None:
+def test_api_rejects_unauthenticated_origin_traversal_and_replayed_token(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     (root / "Demo.lean").write_text(LEAN, encoding="utf-8")
@@ -58,12 +62,17 @@ def test_api_rejects_unauthenticated_origin_traversal_and_replayed_token(tmp_pat
     token = app.state.studio.security.issue_bootstrap_token()
     assert client.post("/api/session", json={"token": token}).status_code == 200
     assert client.post("/api/session", json={"token": token}).status_code == 401
-    assert client.post("/api/projects", json={"path": "../Secret.lean"}).status_code == 400
-    assert client.post(
-        "/api/projects",
-        json={"path": "Demo.lean"},
-        headers={"Origin": "https://evil.invalid"},
-    ).status_code == 403
+    assert (
+        client.post("/api/projects", json={"path": "../Secret.lean"}).status_code == 400
+    )
+    assert (
+        client.post(
+            "/api/projects",
+            json={"path": "Demo.lean"},
+            headers={"Origin": "https://evil.invalid"},
+        ).status_code
+        == 403
+    )
 
 
 def test_sse_reconnect_resumes_after_last_event_id(tmp_path: Path) -> None:
